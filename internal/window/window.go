@@ -108,6 +108,11 @@ func (m *Manager) OpenPopup(payload map[string]any) {
 		AlwaysOnTop:   true,
 		DisableResize: true,
 		Hidden:        true,
+		Mac: application.MacWindow{
+			WindowLevel: application.MacWindowLevelScreenSaver,
+			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
+				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
+		},
 	})
 	m.popup = popup
 	m.mu.Unlock()

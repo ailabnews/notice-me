@@ -1,0 +1,19 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Windows build not supported on this machine
+    cmds:
+      - echo "Use a Windows host for Windows builds"
+
+  package:
+    summary: Windows packaging not supported on this machine
+    cmds:
+      - echo "Use a Windows host for Windows packaging"
+
+  run:
+    cmds:
+      - echo "Use a Windows host to run"

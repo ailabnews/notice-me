@@ -1,0 +1,19 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: Linux build not supported on this machine
+    cmds:
+      - echo "Use a Linux host or Docker for Linux builds"
+
+  package:
+    summary: Linux packaging not supported on this machine
+    cmds:
+      - echo "Use a Linux host or Docker for Linux packaging"
+
+  run:
+    cmds:
+      - echo "Use a Linux host to run"
