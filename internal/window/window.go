@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -96,6 +97,17 @@ func (m *Manager) OpenPopup(payload map[string]any) {
 	if h <= 0 {
 		h = 220
 	}
+	// Grow popup height for long messages (e.g. Claude hook tool details).
+	// Use rune count so Chinese text sizing is accurate.
+	if msg, _ := payload["message"].(string); utf8.RuneCountInString(msg) > 80 {
+		chars := utf8.RuneCountInString(msg)
+		extra := min(chars/30*16, 400) // ~16px per line, cap +400px
+		h = max(h, 280)
+		h += extra
+		if h > 800 {
+			h = 800
+		}
+	}
 
 	// Build popup URL with notification data as query params.
 	q := url.Values{}
@@ -112,15 +124,17 @@ func (m *Manager) OpenPopup(payload map[string]any) {
 	}
 
 	popup := m.app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:            "popup",
-		Title:           winTitle,
-		Width:           w,
-		Height:          h,
-		URL:             popupURL,
-		AlwaysOnTop:     true,
-		DisableResize:   true,
-		Hidden:          false,
-		InitialPosition: application.WindowCentered,
+		Name:                 "popup",
+		Title:                winTitle,
+		Width:                w,
+		Height:               h,
+		URL:                  popupURL,
+		AlwaysOnTop:          true,
+		DisableResize:        true,
+		Hidden:               false,
+		InitialPosition:      application.WindowCentered,
+		MinimiseButtonState:  application.ButtonHidden,
+		MaximiseButtonState:  application.ButtonHidden,
 		Mac: application.MacWindow{
 			WindowLevel: application.MacWindowLevelFloating,
 			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |

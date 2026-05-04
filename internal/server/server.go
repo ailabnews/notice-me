@@ -56,9 +56,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(path.Join(prefix, "_history"), http.HandlerFunc(s.historyHandler))
 	mux.Handle(path.Join(prefix, "_history/delete"), http.HandlerFunc(s.historyDeleteHandler))
 	mux.Handle(path.Join(prefix, "_history/clear"), http.HandlerFunc(s.historyClearHandler))
+	// Claude Code hooks endpoint — no auth (localhost only).
+	mux.Handle(path.Join(prefix, "claude/hook"), http.HandlerFunc(s.claudeHookHandler))
 	// Wrap only the notification endpoints with auth, not internal endpoints.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, path.Join(prefix, "_")) {
+		if strings.HasPrefix(r.URL.Path, path.Join(prefix, "_")) || strings.HasPrefix(r.URL.Path, path.Join(prefix, "claude/")) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			if r.Method == http.MethodOptions {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

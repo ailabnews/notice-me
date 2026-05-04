@@ -68,6 +68,25 @@ Field priority for overrides: **JSON body > Header > Query > endpoint default > 
 
 ## ClaudeCode hook
 
+### Method 1: HTTP hooks (recommended)
+
+Claude Code natively supports HTTP hooks — configure it to POST directly to notify-me's `/api/claude/hook` endpoint. No shell scripts needed.
+
+Copy `examples/claude-settings.json` into your `~/.claude/settings.json` (global) or `.claude/settings.json` (per-project). The endpoint handles these hook events:
+
+| Event | Behavior | Popup |
+| --- | --- | --- |
+| `PreToolUse` | **Blocking** — waits for user decision, returns `allow`/`deny` | Confirm/Danger popup |
+| `PermissionRequest` | **Blocking** — waits for user decision, returns `allow`/`deny` | Confirm popup |
+| `PermissionDenied` | **Instant** — returns `retry: true` so Claude can retry | None |
+| `Notification` (idle_prompt) | **Fire-and-forget** — shows notification, returns 200 immediately | Info popup |
+| `Stop` | **Fire-and-forget** — shows "Claude 已完成" | Info popup |
+| `StopFailure` | **Fire-and-forget** — shows error message | Info popup |
+
+Dangerous commands (`rm -rf`, `git push --force`, `git reset --hard`, etc.) are automatically detected and shown with the danger popup style (red warning).
+
+### Method 2: Shell command hooks (legacy)
+
 See `examples/claude-hook-confirm.sh` (bash) / `examples/claude-hook-confirm.ps1` (PowerShell).
 
 ## Configuration

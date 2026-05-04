@@ -106,8 +106,6 @@ func (d *Dispatcher) drainOnShutdown() {
 }
 
 func (d *Dispatcher) run(ctx context.Context, n *Notification) {
-	timer := time.NewTimer(n.Timeout)
-	defer timer.Stop()
 	d.opts.OnActive(n)
 
 	var doneCh <-chan struct{}
@@ -115,18 +113,26 @@ func (d *Dispatcher) run(ctx context.Context, n *Notification) {
 		doneCh = n.Done
 	}
 
-	select {
-	case <-ctx.Done():
-		// Resolve is once-guarded — if external Resolve already won, this is a no-op.
-		d.Resolve(n.ID, Result{Decision: "cancelled", Reason: "shutdown"})
-	case <-timer.C:
-		decision := "timeout"
-		if n.TimeoutAct == "denied" {
-			decision = "denied"
+	// Timeout == 0 means wait indefinitely for user action.
+	if n.Timeout > 0 {
+		timer := time.NewTimer(n.Timeout)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			d.Resolve(n.ID, Result{Decision: "cancelled", Reason: "shutdown"})
+		case <-timer.C:
+			decision := "timeout"
+			if n.TimeoutAct == "denied" {
+				decision = "denied"
+			}
+			d.Resolve(n.ID, Result{Decision: decision, Reason: "timeout"})
+		case <-doneCh:
 		}
-		d.Resolve(n.ID, Result{Decision: decision, Reason: "timeout"})
-	case <-doneCh:
-		// External Resolve already cleaned inFlight + wrote to ResultCh.
-		// We just release the active slot.
+	} else {
+		select {
+		case <-ctx.Done():
+			d.Resolve(n.ID, Result{Decision: "cancelled", Reason: "shutdown"})
+		case <-doneCh:
+		}
 	}
 }

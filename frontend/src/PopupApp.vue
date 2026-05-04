@@ -1,6 +1,6 @@
 <template>
   <div class="popup">
-    <pre class="popup-message">{{ message }}</pre>
+    <div class="popup-message" v-html="renderedMessage"></div>
     <div class="popup-actions">
       <button v-if="cancelText" class="cancel" @click="resolve(cancelText)">{{ cancelText }}</button>
       <button class="ok" @click="resolve(okText)">
@@ -11,14 +11,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { renderMd } from './markdown'
 
 const id = ref<number>(0)
-const title = ref(''),
-  message = ref(''),
+const title = ref('')
+const message = ref(''),
   okText = ref('确定'),
   cancelText = ref('')
 const mode = ref<'two-button' | 'single-button'>('two-button')
+
+const renderedMessage = computed(() => renderMd(message.value))
 
 let resolveBase = ''
 
