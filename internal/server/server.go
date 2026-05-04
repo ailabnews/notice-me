@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,14 +22,18 @@ import (
 type HistoryStore interface {
 	Insert(ctx context.Context, r storage.Record) (int64, error)
 	UpdateStatus(ctx context.Context, id int64, status string, resolvedAt int64) error
+	List(ctx context.Context, f storage.ListFilter) ([]storage.Record, int, error)
+	Delete(ctx context.Context, id int64) error
+	DeleteAll(ctx context.Context) error
 }
 
 type Server struct {
-	cfg  *config.Config
-	disp *dispatcher.Dispatcher
-	db   HistoryStore
-	log  zerolog.Logger
-	srv  *http.Server
+	cfg       *config.Config
+	disp      *dispatcher.Dispatcher
+	db        HistoryStore
+	log       zerolog.Logger
+	srv       *http.Server
+	OnResolve func() // called after _resolve to close the popup window
 }
 
 func New(cfg *config.Config, d *dispatcher.Dispatcher, db HistoryStore, log zerolog.Logger) *Server {
@@ -44,7 +50,111 @@ func (s *Server) Handler() http.Handler {
 	for _, ep := range snap.Endpoints {
 		mux.Handle(path.Join(prefix, ep.Path), s.endpointHandler(ep))
 	}
-	return tokenMiddleware(snap.Server.AuthToken, mux)
+	// Internal resolve endpoint for popup — no auth, not wrapped in tokenMiddleware.
+	mux.Handle(path.Join(prefix, "_resolve"), http.HandlerFunc(s.resolveHandler))
+	// Internal history API for main window — no auth, local-only.
+	mux.Handle(path.Join(prefix, "_history"), http.HandlerFunc(s.historyHandler))
+	mux.Handle(path.Join(prefix, "_history/delete"), http.HandlerFunc(s.historyDeleteHandler))
+	mux.Handle(path.Join(prefix, "_history/clear"), http.HandlerFunc(s.historyClearHandler))
+	// Wrap only the notification endpoints with auth, not internal endpoints.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, path.Join(prefix, "_")) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			mux.ServeHTTP(w, r)
+			return
+		}
+		tokenMiddleware(snap.Server.AuthToken, mux).ServeHTTP(w, r)
+	})
+}
+
+// resolveHandler is an internal endpoint used by the popup window to submit
+// the user's decision. It bypasses auth since it's called from the local popup.
+func (s *Server) resolveHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	decision := r.URL.Query().Get("decision")
+	if idStr == "" || decision == "" {
+		http.Error(w, "missing id or decision", http.StatusBadRequest)
+		return
+	}
+	var id int64
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	s.disp.Resolve(id, dispatcher.Result{Decision: decision})
+	if s.OnResolve != nil {
+		s.OnResolve()
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) historyHandler(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	status := q.Get("status")
+	search := q.Get("search")
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if limit <= 0 {
+		limit = 20
+	}
+	recs, total, err := s.db.List(r.Context(), storage.ListFilter{
+		Status: status,
+		Search: search,
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"records": recs,
+		"total":   total,
+	})
+}
+
+func (s *Server) historyDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := s.db.Delete(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) historyClearHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.db.DeleteAll(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *Server) Start() error {

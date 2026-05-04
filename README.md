@@ -2,7 +2,7 @@
 
 Cross-platform desktop confirmation tool. HTTP in, popup out.
 
-Receives HTTP POSTs on `localhost:886`, displays an always-on-top popup, and synchronously returns the user's decision (`approved` / `denied` / `acknowledged` / `timeout`) to the caller. Designed to make ClaudeCode hook confirmations not require staring at a terminal.
+Receives HTTP POSTs on `localhost:1886`, displays an always-on-top popup, and synchronously returns the user's decision (`approved` / `denied` / `acknowledged` / `timeout`) to the caller. Designed to make ClaudeCode hook confirmations not require staring at a terminal.
 
 ## Build
 
@@ -33,7 +33,7 @@ Three endpoints (default prefix `/api`, configurable):
 
 **Plain text:**
 ```bash
-curl -d "Continue?" http://127.0.0.1:886/api/confirm
+curl -d "Continue?" http://127.0.0.1:1886/api/confirm
 ```
 
 **Header / Query overrides:**
@@ -43,14 +43,14 @@ curl -d "rm -rf /tmp/foo" \
      -H "X-Timeout: 60" \
      -H "X-Ok: 允许" \
      -H "X-Cancel: 拒绝" \
-     http://127.0.0.1:886/api/confirm
+     http://127.0.0.1:1886/api/confirm
 ```
 
 **JSON:**
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{
   "title":"Confirm","message":"rm -rf /tmp","timeout":60
-}' http://127.0.0.1:886/api/confirm
+}' http://127.0.0.1:1886/api/confirm
 ```
 
 ### Response (HTTP 200, body)
@@ -73,8 +73,7 @@ See `examples/claude-hook-confirm.sh` (bash) / `examples/claude-hook-confirm.ps1
 ## Configuration
 
 Lives at:
-- macOS: `~/Library/Application Support/notify-me/config.json`
-- Windows: `%APPDATA%\notify-me\config.json`
+- macOS / Windows / Linux: `~/.notice-me/config.json`
 
 Editable via the Settings tab in the main window. Most fields hot-reload; `host` / `port` changes require a restart.
 

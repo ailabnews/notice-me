@@ -14,7 +14,7 @@ func TestLoadOrInitWritesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOrInit: %v", err)
 	}
-	if cfg.Server.Port != 886 {
+	if cfg.Server.Port != 1886 {
 		t.Fatalf("default port: got %d", cfg.Server.Port)
 	}
 	if len(cfg.Endpoints) != 3 {

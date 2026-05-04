@@ -1,7 +1,7 @@
 $cmd = $env:CLAUDE_TOOL_INPUT
 if (-not $cmd) { $cmd = '(no tool input env)' }
 try {
-  $r = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:886/api/confirm -Body $cmd -TimeoutSec 200
+  $r = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:1886/api/confirm -Body $cmd -TimeoutSec 200
 } catch {
   $r = 'denied'
 }

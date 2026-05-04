@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`notify-me` — cross-platform desktop confirmation tool. Listens on `127.0.0.1:886`, accepts HTTP POSTs (e.g. from a ClaudeCode hook), shows an always-on-top popup, and **synchronously** returns the user's decision (`approved` / `denied` / `acknowledged` / `timeout` / `cancelled`) in the HTTP response body. Module path: `notify-me`.
+`notify-me` — cross-platform desktop confirmation tool. Listens on `127.0.0.1:1886`, accepts HTTP POSTs (e.g. from a ClaudeCode hook), shows an always-on-top popup, and **synchronously** returns the user's decision (`approved` / `denied` / `acknowledged` / `timeout` / `cancelled`) in the HTTP response body. Module path: `notify-me`.
 
 Stack: Go 1.25 + Wails v3 alpha.78 (CGO/WebView GUI) + Vue 3 + Pinia + Vite (multi-entry) + modernc.org/sqlite (pure-Go) + zerolog + lumberjack.
 

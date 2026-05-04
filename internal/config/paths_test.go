@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -12,15 +11,13 @@ func TestConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfigDir: %v", err)
 	}
-	if filepath.Base(dir) != "notify-me" {
-		t.Fatalf("expected suffix notify-me, got %s", dir)
+	if filepath.Base(dir) != ".notice-me" {
+		t.Fatalf("expected suffix .notice-me, got %s", dir)
 	}
 	home, _ := os.UserHomeDir()
-	if runtime.GOOS == "darwin" {
-		want := filepath.Join(home, "Library", "Application Support", "notify-me")
-		if dir != want {
-			t.Fatalf("darwin: want %s got %s", want, dir)
-		}
+	want := filepath.Join(home, ".notice-me")
+	if dir != want {
+		t.Fatalf("want %s got %s", want, dir)
 	}
 }
 

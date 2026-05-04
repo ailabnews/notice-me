@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,6 +28,7 @@ type Record struct {
 
 type ListFilter struct {
 	Status string
+	Search string
 	Limit  int
 	Offset int
 }
@@ -86,11 +88,20 @@ func (s *Storage) List(ctx context.Context, f ListFilter) ([]Record, int, error)
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
-	args := []any{}
-	where := ""
+	var conds []string
+	var args []any
 	if f.Status != "" {
-		where = "WHERE status=?"
+		conds = append(conds, "status=?")
 		args = append(args, f.Status)
+	}
+	if f.Search != "" {
+		conds = append(conds, "(title LIKE ? OR message LIKE ?)")
+		pattern := "%" + f.Search + "%"
+		args = append(args, pattern, pattern)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM notifications %s", where), args...).Scan(&total); err != nil {
@@ -119,4 +130,14 @@ func (s *Storage) List(ctx context.Context, f ListFilter) ([]Record, int, error)
 		out = append(out, r)
 	}
 	return out, total, rows.Err()
+}
+
+func (s *Storage) Delete(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM notifications WHERE id=?`, id)
+	return err
+}
+
+func (s *Storage) DeleteAll(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM notifications`)
+	return err
 }

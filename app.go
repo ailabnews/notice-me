@@ -99,6 +99,7 @@ func (a *App) Boot(w *application.App) {
 	go a.disp.Run(a.ctx)
 
 	a.server = server.New(a.cfg, a.disp, a.db, a.log)
+	a.server.OnResolve = func() { a.win.ClosePopup() }
 	if err := a.server.Start(); err != nil {
 		a.log.Error().Err(err).Msg("server start failed")
 		showStartupError("notify-me 启动失败 (server): " + err.Error())
@@ -159,14 +160,30 @@ type HistoryPage struct {
 	Total   int              `json:"total"`
 }
 
-// History returns paginated history records, optionally filtered by status.
-// status="" means "all statuses".
-func (a *App) History(status string, limit, offset int) (HistoryPage, error) {
+// History returns paginated history records, optionally filtered by status
+// and/or a free-text search on title and message. status="" means "all statuses".
+func (a *App) History(status, search string, limit, offset int) (HistoryPage, error) {
 	if a.db == nil {
 		return HistoryPage{}, nil
 	}
-	recs, total, err := a.db.List(a.ctx, storage.ListFilter{Status: status, Limit: limit, Offset: offset})
+	recs, total, err := a.db.List(a.ctx, storage.ListFilter{Status: status, Search: search, Limit: limit, Offset: offset})
 	return HistoryPage{Records: recs, Total: total}, err
+}
+
+// DeleteRecord removes a single notification record by ID.
+func (a *App) DeleteRecord(id int64) error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Delete(a.ctx, id)
+}
+
+// ClearHistory removes all notification records.
+func (a *App) ClearHistory() error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.DeleteAll(a.ctx)
 }
 
 // GetConfig returns the live config as a pretty-printed JSON string. The

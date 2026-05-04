@@ -5,6 +5,8 @@
 package window
 
 import (
+	"fmt"
+	"net/url"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -12,10 +14,6 @@ import (
 
 	"notify-me/internal/config"
 )
-
-// EventNotificationShow is the custom event the popup window's frontend
-// listens for to render the active notification's content.
-const EventNotificationShow = "notification:show"
 
 type Manager struct {
 	app *application.App
@@ -78,8 +76,8 @@ func (m *Manager) ShowMain() {
 }
 
 // OpenPopup creates a fresh always-on-top popup window for one notification.
-// The notification:show event is emitted once the popup's webview is ready, so
-// the frontend can hydrate without races.
+// Notification data and server address are passed via URL query params so the
+// popup frontend can render immediately without needing the Wails JS runtime.
 func (m *Manager) OpenPopup(payload map[string]any) {
 	m.mu.Lock()
 	if m.popup != nil {
@@ -98,33 +96,42 @@ func (m *Manager) OpenPopup(payload map[string]any) {
 	if h <= 0 {
 		h = 220
 	}
-	title, _ := payload["title"].(string)
+
+	// Build popup URL with notification data as query params.
+	q := url.Values{}
+	for k, v := range payload {
+		q.Set(k, fmt.Sprintf("%v", v))
+	}
+	q.Set("port", fmt.Sprintf("%d", snap.Server.Port))
+	q.Set("prefix", snap.Server.EndpointPrefix)
+	popupURL := "/popup.html?" + q.Encode()
+
+	winTitle, _ := payload["title"].(string)
+	if winTitle == "" {
+		winTitle = "notify-me"
+	}
+
 	popup := m.app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:          "popup",
-		Title:         title,
-		Width:         w,
-		Height:        h,
-		URL:           "/popup.html",
-		AlwaysOnTop:   true,
-		DisableResize: true,
-		Hidden:        true,
+		Name:            "popup",
+		Title:           winTitle,
+		Width:           w,
+		Height:          h,
+		URL:             popupURL,
+		AlwaysOnTop:     true,
+		DisableResize:   true,
+		Hidden:          false,
+		InitialPosition: application.WindowCentered,
 		Mac: application.MacWindow{
-			WindowLevel: application.MacWindowLevelScreenSaver,
+			WindowLevel: application.MacWindowLevelFloating,
 			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
 				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
+		},
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar: true,
 		},
 	})
 	m.popup = popup
 	m.mu.Unlock()
-
-	// Emit the payload only once the popup's runtime has loaded so the
-	// frontend listener is guaranteed to be registered. WindowRuntimeReady is
-	// the alpha.78 equivalent of the older DOMReady event.
-	popup.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
-		m.app.Event.Emit(EventNotificationShow, payload)
-		popup.Show()
-		popup.Focus()
-	})
 }
 
 // ClosePopup tears down the active popup window, if any.

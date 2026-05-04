@@ -6,7 +6,7 @@ func defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Host:           "127.0.0.1",
-			Port:           886,
+			Port:           1886,
 			EndpointPrefix: "/api",
 			AuthToken:      "",
 			MaxQueueSize:   100,

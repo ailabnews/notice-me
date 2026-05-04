@@ -129,6 +129,11 @@ func (f *fakeStorage) Insert(ctx context.Context, r storage.Record) (int64, erro
 func (f *fakeStorage) UpdateStatus(ctx context.Context, id int64, status string, ts int64) error {
 	return nil
 }
+func (f *fakeStorage) List(ctx context.Context, fl storage.ListFilter) ([]storage.Record, int, error) {
+	return nil, 0, nil
+}
+func (f *fakeStorage) Delete(ctx context.Context, id int64) error { return nil }
+func (f *fakeStorage) DeleteAll(ctx context.Context) error       { return nil }
 
 func TestEndToEndApproved(t *testing.T) {
 	t.Setenv("NOTIFY_ME_CONFIG_HOME", t.TempDir())
