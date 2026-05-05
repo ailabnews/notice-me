@@ -32,6 +32,20 @@ type Notification struct {
 	TimeoutAct string // "timeout" | "denied"
 	CreatedAt  time.Time
 
+	// Hook detail fields, populated by claude_hook.go for dashboard.
+	ToolName         string
+	ToolInputSummary string
+	HookEvent        string
+	TranscriptPath   string
+
+	// HasDiff indicates this notification carries diff data (Edit/Write tools)
+	// and the popup should show a "View Diff" button.
+	HasDiff bool
+
+	// Policy engine fields.
+	SessionID   string
+	ToolContent string
+
 	// ResultCh delivers exactly one Result to the HTTP handler. Cap 1.
 	ResultCh chan Result
 	// Done is closed exactly once when Resolve is invoked. Used by the

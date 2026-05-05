@@ -17,6 +17,9 @@ type Options struct {
 	// one. Implementations should NOT block — typically emit a Wails event then
 	// return immediately.
 	OnActive func(*Notification)
+	// OnResolve is called after any in-flight notification is resolved
+	// (user action, timeout, cancel, shutdown). May be nil.
+	OnResolve func()
 }
 
 type Dispatcher struct {
@@ -66,11 +69,29 @@ func (d *Dispatcher) Resolve(id int64, r Result) {
 	d.mu.Unlock()
 	if ok {
 		n.Resolve(r)
+		if d.opts.OnResolve != nil {
+			d.opts.OnResolve()
+		}
 	}
 }
 
 func (d *Dispatcher) Cancel(id int64) {
 	d.Resolve(id, Result{Decision: "cancelled", Reason: "cancelled"})
+}
+
+// GetInFlight returns the in-flight notification by ID, or nil if not found.
+func (d *Dispatcher) GetInFlight(id int64) *Notification {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.inFlight[id]
+}
+
+// InFlightCount returns the number of notifications currently in the system
+// (queued or being actively displayed). Safe to call from any goroutine.
+func (d *Dispatcher) InFlightCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.inFlight)
 }
 
 func (d *Dispatcher) Run(ctx context.Context) {
