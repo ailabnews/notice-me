@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"notify-me/internal/diff"
 	"notify-me/internal/dispatcher"
 	"notify-me/internal/storage"
 )
@@ -93,44 +95,122 @@ func (s *Server) claudeHookHandler(w http.ResponseWriter, r *http.Request) {
 		Str("tool", req.ToolName).
 		Msg("claude hook received")
 
+	out := s.routeHookEvent(r.Context(), &req)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// --------------- IPC entry point ---------------
+
+// ProcessHookIPC processes a Claude Code hook request received via the IPC
+// socket (non-HTTP path). body is the raw JSON from the hook. Returns the
+// response JSON for the caller to write back to the IPC client.
+func (s *Server) ProcessHookIPC(ctx context.Context, body []byte) ([]byte, error) {
+	var req claudeHookRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("invalid json: %w", err)
+	}
+
+	s.log.Debug().
+		Str("event", req.HookEventName).
+		Str("tool", req.ToolName).
+		Str("source", "ipc").
+		Msg("claude hook received")
+
+	out := s.routeHookEvent(ctx, &req)
+	return json.Marshal(out)
+}
+
+// routeHookEvent dispatches a hook request to the appropriate processor.
+func (s *Server) routeHookEvent(ctx context.Context, req *claudeHookRequest) claudeHookOutput {
 	switch req.HookEventName {
 	case "PreToolUse":
-		s.handlePreToolUse(w, r, &req)
+		if isInteractiveTool(req.ToolName) {
+			s.processInteractiveTool(req)
+			return claudeHookOutput{
+				HookSpecificOutput: &hookSpecificOutput{
+					HookEventName:         "PreToolUse",
+					PermissionDecision:    "allow",
+					PermissionDecisionRsn: "interactive tool, auto-allowed",
+				},
+			}
+		}
+		return s.processPreToolUse(ctx, req)
 	case "PermissionRequest":
-		s.handlePermissionRequest(w, r, &req)
+		if isInteractiveTool(req.ToolName) {
+			s.processInteractiveTool(req)
+			return claudeHookOutput{
+				HookSpecificOutput: &hookSpecificOutput{
+					HookEventName:         "PermissionRequest",
+					PermissionDecision:    "allow",
+					PermissionDecisionRsn: "interactive tool, auto-allowed",
+				},
+			}
+		}
+		return s.processPermissionRequest(ctx, req)
 	case "PermissionDenied":
-		s.handlePermissionDenied(w, r, &req)
+		return s.processPermissionDenied()
 	case "Notification":
-		s.handleNotification(w, r, &req)
+		s.processNotification(req)
+		return claudeHookOutput{}
 	case "Stop":
-		s.handleStop(w, r, &req)
+		// When stop hook toggle is off, return success immediately without popup or history.
+		if !s.cfg.Snapshot().Behavior.StopHookEnabled {
+			return claudeHookOutput{}
+		}
+		s.processStop(req)
+		return claudeHookOutput{}
 	case "StopFailure":
-		s.handleStopFailure(w, r, &req)
+		// StopFailure (errors) always shows a popup regardless of the toggle.
+		s.processStopFailure(req)
+		return claudeHookOutput{}
 	default:
-		// Unknown / unsupported event — acknowledge and move on.
-		w.WriteHeader(http.StatusOK)
+		return claudeHookOutput{}
 	}
 }
 
-// --------------- Blocking handlers ---------------
+// --------------- Core logic (HTTP-independent) ---------------
 
-// handlePreToolUse shows a confirmation popup and returns a permissionDecision
-// (allow/deny) based on the user's response.
-func (s *Server) handlePreToolUse(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
+func (s *Server) processPreToolUse(ctx context.Context, req *claudeHookRequest) claudeHookOutput {
 	toolInput := parseToolInput(req.ToolInput)
 	title, message, okText, cancelText, mode := buildPreToolUsePopup(req, toolInput)
 
-	result, err := s.blockingPopup(r.Context(), title, message, okText, cancelText, mode)
+	// Prepare diff data for Edit/Write tools.
+	var diffPayload *diff.DiffPayload
+	isDiffTool := req.ToolName == "Edit" || req.ToolName == "Write"
+	if isDiffTool {
+		dp := diff.DiffPayload{
+			ToolName:  req.ToolName,
+			FilePath:  toolInput.FilePath,
+			OldString: toolInput.OldString,
+			NewString: toolInput.NewString,
+		}
+		if req.ToolName == "Write" {
+			dp.NewString = toolInput.Content
+			// Read current file content for Write diff context.
+			if data, err := os.ReadFile(toolInput.FilePath); err == nil {
+				dp.OldString = string(data)
+			}
+		}
+		dp.Hunks = diff.ComputeHunks(dp.OldString, dp.NewString)
+		diffPayload = &dp
+	}
+
+	hi := &hookInfo{
+		ToolName:         req.ToolName,
+		ToolInputSummary: truncate(formatToolMessage(req.ToolName, toolInput), 200),
+		HookEvent:        req.HookEventName,
+		TranscriptPath:   req.TranscriptPath,
+	}
+
+	result, err := s.blockingPopup(ctx, req.SessionID, title, message, okText, cancelText, mode, diffPayload, hi)
 	if err != nil {
-		// Queue full or server error — deny to be safe.
-		writeJSON(w, http.StatusOK, claudeHookOutput{
+		return claudeHookOutput{
 			HookSpecificOutput: &hookSpecificOutput{
 				HookEventName:         "PreToolUse",
 				PermissionDecision:    "deny",
 				PermissionDecisionRsn: "notify-me: " + err.Error(),
 			},
-		})
-		return
+		}
 	}
 
 	decision := "allow"
@@ -140,18 +220,16 @@ func (s *Server) handlePreToolUse(w http.ResponseWriter, r *http.Request, req *c
 		reason = "用户通过 notify-me 拒绝 (" + result + ")"
 	}
 
-	writeJSON(w, http.StatusOK, claudeHookOutput{
+	return claudeHookOutput{
 		HookSpecificOutput: &hookSpecificOutput{
 			HookEventName:         "PreToolUse",
 			PermissionDecision:    decision,
 			PermissionDecisionRsn: reason,
 		},
-	})
+	}
 }
 
-// handlePermissionRequest shows a confirmation popup and returns a
-// permission decision (allow/deny).
-func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
+func (s *Server) processPermissionRequest(ctx context.Context, req *claudeHookRequest) claudeHookOutput {
 	toolInput := parseToolInput(req.ToolInput)
 	title := "权限请求: " + req.ToolName
 	message := formatToolMessage(req.ToolName, toolInput)
@@ -159,9 +237,16 @@ func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request,
 		message = req.ToolName + " 请求权限"
 	}
 
-	result, err := s.blockingPopup(r.Context(), title, message, "允许", "拒绝", dispatcher.ModeTwoButton)
+	hi := &hookInfo{
+		ToolName:         req.ToolName,
+		ToolInputSummary: truncate(formatToolMessage(req.ToolName, toolInput), 200),
+		HookEvent:        req.HookEventName,
+		TranscriptPath:   req.TranscriptPath,
+	}
+
+	result, err := s.blockingPopup(ctx, req.SessionID, title, message, "允许", "拒绝", dispatcher.ModeTwoButton, nil, hi)
 	if err != nil {
-		writeJSON(w, http.StatusOK, claudeHookOutput{
+		return claudeHookOutput{
 			HookSpecificOutput: &hookSpecificOutput{
 				HookEventName: "PermissionRequest",
 				Decision: &permissionDecision{
@@ -169,8 +254,7 @@ func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request,
 					Message:  "notify-me: " + err.Error(),
 				},
 			},
-		})
-		return
+		}
 	}
 
 	behavior := "allow"
@@ -189,33 +273,19 @@ func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request,
 	if behavior == "deny" {
 		out.HookSpecificOutput.Decision.Message = "用户通过 notify-me 拒绝"
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
-// handlePermissionDenied returns a retry suggestion when auto mode denies a tool.
-func (s *Server) handlePermissionRequestDenied(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
-	writeJSON(w, http.StatusOK, claudeHookOutput{
+func (s *Server) processPermissionDenied() claudeHookOutput {
+	return claudeHookOutput{
 		HookSpecificOutput: &hookSpecificOutput{
 			HookEventName: "PermissionDenied",
 			Retry:         true,
 		},
-	})
+	}
 }
 
-// handlePermissionDenied is the real handler for the PermissionDenied event.
-func (s *Server) handlePermissionDenied(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
-	writeJSON(w, http.StatusOK, claudeHookOutput{
-		HookSpecificOutput: &hookSpecificOutput{
-			HookEventName: "PermissionDenied",
-			Retry:         true,
-		},
-	})
-}
-
-// --------------- Non-blocking handlers ---------------
-
-// handleNotification shows a transient info popup and returns immediately.
-func (s *Server) handleNotification(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
+func (s *Server) processNotification(req *claudeHookRequest) {
 	title := "Claude Code"
 	if req.Title != "" {
 		title = req.Title
@@ -224,22 +294,19 @@ func (s *Server) handleNotification(w http.ResponseWriter, r *http.Request, req 
 	if message == "" {
 		message = "通知 (" + req.NotificationType + ")"
 	}
-
-	// Fire-and-forget: enqueue popup, return 200 immediately.
+	hi := &hookInfo{
+		HookEvent:      req.HookEventName,
+		TranscriptPath: req.TranscriptPath,
+	}
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), title, message, "知道了", "", dispatcher.ModeSingleButton)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
 	}()
-
-	w.WriteHeader(http.StatusOK)
 }
 
-// handleStop shows a notification popup when Claude finishes.
-func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
+func (s *Server) processStop(req *claudeHookRequest) {
 	title := "Claude 已完成"
 	message := "Claude 已停止响应"
 	if req.LastAssistantMsg != "" {
-		// Truncate long messages for popup display.
-		// Use rune count so Chinese text isn't cut too aggressively.
 		msg := req.LastAssistantMsg
 		if utf8.RuneCountInString(msg) > 2000 {
 			runes := []rune(msg)
@@ -247,16 +314,16 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, req *claudeH
 		}
 		message = msg
 	}
-
+	hi := &hookInfo{
+		HookEvent:      req.HookEventName,
+		TranscriptPath: req.TranscriptPath,
+	}
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), title, message, "知道了", "", dispatcher.ModeSingleButton)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
 	}()
-
-	w.WriteHeader(http.StatusOK)
 }
 
-// handleStopFailure shows a notification popup when Claude errors out.
-func (s *Server) handleStopFailure(w http.ResponseWriter, r *http.Request, req *claudeHookRequest) {
+func (s *Server) processStopFailure(req *claudeHookRequest) {
 	title := "Claude 出错了"
 	message := req.Error
 	if req.ErrorDetails != "" {
@@ -265,22 +332,65 @@ func (s *Server) handleStopFailure(w http.ResponseWriter, r *http.Request, req *
 	if message == "" {
 		message = "未知错误"
 	}
+	hi := &hookInfo{
+		HookEvent:      req.HookEventName,
+		TranscriptPath: req.TranscriptPath,
+	}
+	go func() {
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
+	}()
+}
+
+// isInteractiveTool returns true for tools that present interactive choices
+// in the terminal. These are auto-allowed with an info popup so the terminal
+// remains free for the user to make selections.
+func isInteractiveTool(toolName string) bool {
+	switch toolName {
+	case "AskUserQuestion":
+		return true
+	default:
+		return false
+	}
+}
+
+// processInteractiveTool shows a non-blocking info popup for interactive tools
+// (like AskUserQuestion) that need the user to select options in the terminal.
+func (s *Server) processInteractiveTool(req *claudeHookRequest) {
+	toolInput := parseToolInput(req.ToolInput)
+	title := "💬 交互选择"
+	message := "Claude 需要您的选择，请到终端操作"
+	if toolInput.Description != "" {
+		message = toolInput.Description + "\n\n请到终端进行选择"
+	}
+
+	hi := &hookInfo{
+		ToolName:         req.ToolName,
+		ToolInputSummary: truncate(formatToolMessage(req.ToolName, toolInput), 200),
+		HookEvent:        req.HookEventName,
+		TranscriptPath:   req.TranscriptPath,
+	}
 
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), title, message, "知道了", "", dispatcher.ModeSingleButton)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
 	}()
-
-	w.WriteHeader(http.StatusOK)
 }
 
 // --------------- Helpers ---------------
+
+// hookInfo carries Claude Code hook metadata for dashboard tracking.
+type hookInfo struct {
+	ToolName         string
+	ToolInputSummary string
+	HookEvent        string
+	TranscriptPath   string
+}
 
 // blockingPopup enqueues a notification, blocks until the user responds or
 // the request context is cancelled, then returns a canonical decision:
 // "approved", "denied", "acknowledged", "timeout", or "cancelled".
 // The popup sends the button label as the decision; we normalize it here
 // so callers always get a stable value regardless of locale/button text.
-func (s *Server) blockingPopup(ctx context.Context, title, message, okText, cancelText string, mode dispatcher.Mode) (string, error) {
+func (s *Server) blockingPopup(ctx context.Context, sessionID, title, message, okText, cancelText string, mode dispatcher.Mode, diffPayload *diff.DiffPayload, hi *hookInfo) (string, error) {
 	if s.disp.IsPaused() {
 		return "", fmt.Errorf("server paused")
 	}
@@ -297,19 +407,40 @@ func (s *Server) blockingPopup(ctx context.Context, title, message, okText, canc
 	n.SourceIP = "127.0.0.1"
 	n.SourceHdr = "claude-hook"
 
+	if hi != nil {
+		n.ToolName = hi.ToolName
+		n.ToolInputSummary = hi.ToolInputSummary
+		n.HookEvent = hi.HookEvent
+		n.TranscriptPath = hi.TranscriptPath
+	}
+
+	if diffPayload != nil {
+		n.HasDiff = true
+	}
+
 	id, err := s.db.Insert(ctx, storage.Record{
-		Endpoint:     n.Endpoint,
-		Title:        n.Title,
-		Message:      n.Message,
-		SourceIP:     n.SourceIP,
-		SourceHeader: n.SourceHdr,
-		Status:       "pending",
-		CreatedAt:    time.Now().UnixMilli(),
+		Endpoint:         n.Endpoint,
+		Title:            n.Title,
+		Message:          n.Message,
+		SourceIP:         n.SourceIP,
+		SourceHeader:     n.SourceHdr,
+		SessionID:        sessionID,
+		ToolName:         n.ToolName,
+		ToolInputSummary: n.ToolInputSummary,
+		HookEvent:        n.HookEvent,
+		TranscriptPath:   n.TranscriptPath,
+		Status:           "pending",
+		CreatedAt:        time.Now().UnixMilli(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("storage: %w", err)
 	}
 	n.ID = id
+
+	// Store diff data for the diff viewer to fetch.
+	if diffPayload != nil {
+		s.DiffStore.Set(id, *diffPayload)
+	}
 
 	if err := s.disp.Enqueue(n); err != nil {
 		return "", fmt.Errorf("enqueue: %w", err)
@@ -318,12 +449,16 @@ func (s *Server) blockingPopup(ctx context.Context, title, message, okText, canc
 	var raw string
 	select {
 	case res := <-n.ResultCh:
-		_ = s.db.UpdateStatus(ctx, id, res.Decision, time.Now().UnixMilli())
+		_ = s.db.UpdateStatus(ctx, id, res.Decision, time.Now().UnixMilli(), 0)
 		raw = res.Decision
 	case <-ctx.Done():
 		s.disp.Cancel(n.ID)
+		s.DiffStore.Delete(n.ID)
+		if s.OnCancel != nil {
+			s.OnCancel(n.ID)
+		}
 		res := <-n.ResultCh
-		_ = s.db.UpdateStatus(context.Background(), id, res.Decision, time.Now().UnixMilli())
+		_ = s.db.UpdateStatus(context.Background(), id, res.Decision, time.Now().UnixMilli(), 0)
 		raw = res.Decision
 	}
 
@@ -383,32 +518,32 @@ func buildPreToolUsePopup(req *claudeHookRequest, ti claudeToolInput) (string, s
 // formatToolMessageMd produces a Markdown-formatted description of what the tool will do.
 func formatToolMessageMd(toolName string, ti claudeToolInput) string {
 	var b strings.Builder
-	b.WriteString("**工具**: `" + toolName + "`\n")
+	b.WriteString("**工具**: `" + toolName + "`\n\n")
 
 	switch toolName {
 	case "Bash":
 		if ti.Description != "" {
-			b.WriteString("**说明**: " + ti.Description + "\n")
+			b.WriteString("**说明**: " + ti.Description + "\n\n")
 		}
-		b.WriteString("**命令**:\n```\n" + ti.Command + "\n```")
+		b.WriteString("**命令**:\n\n```\n" + ti.Command + "\n```")
 	case "Write":
-		b.WriteString("**文件**: `" + ti.FilePath + "`\n")
+		b.WriteString("**文件**: `" + ti.FilePath + "`\n\n")
 		b.WriteString("**内容长度**: " + fmt.Sprintf("%d", len(ti.Content)) + " 字符")
 	case "Edit":
-		b.WriteString("**文件**: `" + ti.FilePath + "`\n")
+		b.WriteString("**文件**: `" + ti.FilePath + "`\n\n")
 		if ti.OldString != "" {
 			old := ti.OldString
 			if len(old) > 300 {
 				old = old[:297] + "..."
 			}
-			b.WriteString("**替换**:\n```\n" + old + "\n```\n")
+			b.WriteString("**替换**:\n\n```\n" + old + "\n```\n\n")
 		}
 		if ti.NewString != "" {
 			newStr := ti.NewString
 			if len(newStr) > 300 {
 				newStr = newStr[:297] + "..."
 			}
-			b.WriteString("**替换为**:\n```\n" + newStr + "\n```")
+			b.WriteString("**替换为**:\n\n```\n" + newStr + "\n```")
 		}
 		if ti.OldString == "" && ti.NewString == "" {
 			b.WriteString("*(空操作)*")
@@ -421,7 +556,7 @@ func formatToolMessageMd(toolName string, ti claudeToolInput) string {
 		b.WriteString("**搜索**: `" + ti.Pattern + "`")
 	default:
 		if ti.Command != "" {
-			b.WriteString("**命令**:\n```\n" + ti.Command + "\n```")
+			b.WriteString("**命令**:\n\n```\n" + ti.Command + "\n```")
 		} else if ti.FilePath != "" {
 			b.WriteString("**路径**: `" + ti.FilePath + "`")
 		} else if ti.Query != "" {

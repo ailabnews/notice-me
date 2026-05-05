@@ -27,7 +27,7 @@ func newTestServer(t *testing.T, onActive func(*dispatcher.Notification)) (*Serv
 	cfg.Apply(config.Config{
 		Server:    config.ServerConfig{Host: "127.0.0.1", Port: 0, EndpointPrefix: "/api", MaxQueueSize: 4},
 		Endpoints: []config.EndpointConfig{},
-		Behavior:  config.BehaviorConfig{DefaultTimeoutSeconds: 5, TimeoutAction: "timeout"},
+		Behavior:  config.BehaviorConfig{DefaultTimeoutSeconds: 5, TimeoutAction: "timeout", StopHookEnabled: true},
 	})
 
 	var d *dispatcher.Dispatcher
@@ -125,6 +125,93 @@ func TestClaudeHook_PermissionRequest_Allow(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&out)
 	if out.HookSpecificOutput == nil || out.HookSpecificOutput.Decision.Behavior != "allow" {
 		t.Fatalf("expected allow, got %+v", out)
+	}
+}
+
+func TestClaudeHook_PermissionRequest_InteractiveTool_AutoAllowed(t *testing.T) {
+	activated := make(chan string, 1)
+	s, _, cancel := newTestServer(t, func(n *dispatcher.Notification) {
+		activated <- n.Title
+		go n.Resolve(dispatcher.Result{Decision: "acknowledged"})
+	})
+	defer cancel()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	body := `{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"description":"Which auth method?"}}`
+	resp, err := http.Post(ts.URL+"/api/claude/hook", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Should return 200 immediately with auto-allow, not block for user decision.
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d body %q", resp.StatusCode, b)
+	}
+
+	var out claudeHookOutput
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.HookSpecificOutput == nil || out.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("expected auto-allow, got %+v", out)
+	}
+	if out.HookSpecificOutput.PermissionDecisionRsn != "interactive tool, auto-allowed" {
+		t.Fatalf("expected auto-allowed reason, got %q", out.HookSpecificOutput.PermissionDecisionRsn)
+	}
+
+	// Verify the info popup was shown (non-blocking, single-button).
+	select {
+	case title := <-activated:
+		if !strings.Contains(title, "交互") {
+			t.Fatalf("popup title = %q, want something with '交互'", title)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("popup not activated within 2s")
+	}
+}
+
+func TestClaudeHook_PreToolUse_InteractiveTool_AutoAllowed(t *testing.T) {
+	activated := make(chan string, 1)
+	s, _, cancel := newTestServer(t, func(n *dispatcher.Notification) {
+		activated <- n.Title
+		go n.Resolve(dispatcher.Result{Decision: "acknowledged"})
+	})
+	defer cancel()
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	body := `{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"description":"Which approach?"}}`
+	resp, err := http.Post(ts.URL+"/api/claude/hook", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d body %q", resp.StatusCode, b)
+	}
+
+	var out claudeHookOutput
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.HookSpecificOutput == nil || out.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("expected auto-allow, got %+v", out)
+	}
+
+	select {
+	case title := <-activated:
+		if !strings.Contains(title, "交互") {
+			t.Fatalf("popup title = %q, want something with '交互'", title)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("popup not activated within 2s")
 	}
 }
 
@@ -236,6 +323,55 @@ func TestClaudeHook_StopFailure_FireAndForget(t *testing.T) {
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestClaudeHook_Stop_SkippedWhenDisabled(t *testing.T) {
+	activated := make(chan string, 1)
+	t.Setenv("NOTIFY_ME_CONFIG_HOME", t.TempDir())
+	cfg, err := config.LoadOrInit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Apply(config.Config{
+		Server:    config.ServerConfig{Host: "127.0.0.1", Port: 0, EndpointPrefix: "/api", MaxQueueSize: 4},
+		Endpoints: []config.EndpointConfig{},
+		Behavior:  config.BehaviorConfig{DefaultTimeoutSeconds: 5, TimeoutAction: "timeout", StopHookEnabled: false},
+	})
+
+	var d *dispatcher.Dispatcher
+	d = dispatcher.New(dispatcher.Options{
+		QueueSize: 4,
+		OnActive: func(n *dispatcher.Notification) {
+			activated <- n.Title
+			go n.Resolve(dispatcher.Result{Decision: "acknowledged"})
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+	defer cancel()
+
+	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	body := `{"hook_event_name":"Stop","last_assistant_message":"Done!"}`
+	resp, err := http.Post(ts.URL+"/api/claude/hook", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Popup should NOT be activated.
+	select {
+	case <-activated:
+		t.Fatal("popup should not activate when stop hook is disabled")
+	case <-time.After(200 * time.Millisecond):
+		// Expected: no popup.
 	}
 }
 

@@ -126,7 +126,7 @@ func (f *fakeStorage) Insert(ctx context.Context, r storage.Record) (int64, erro
 	f.id++
 	return f.id, nil
 }
-func (f *fakeStorage) UpdateStatus(ctx context.Context, id int64, status string, ts int64) error {
+func (f *fakeStorage) UpdateStatus(ctx context.Context, id int64, status string, ts int64, ruleID int64) error {
 	return nil
 }
 func (f *fakeStorage) List(ctx context.Context, fl storage.ListFilter) ([]storage.Record, int, error) {

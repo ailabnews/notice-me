@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"notify-me/internal/config"
+	"notify-me/internal/diff"
 	"notify-me/internal/dispatcher"
 	"notify-me/internal/storage"
 )
@@ -21,7 +22,7 @@ import (
 // HistoryStore is the subset of storage.Storage we need.
 type HistoryStore interface {
 	Insert(ctx context.Context, r storage.Record) (int64, error)
-	UpdateStatus(ctx context.Context, id int64, status string, resolvedAt int64) error
+	UpdateStatus(ctx context.Context, id int64, status string, resolvedAt int64, ruleID int64) error
 	List(ctx context.Context, f storage.ListFilter) ([]storage.Record, int, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteAll(ctx context.Context) error
@@ -33,11 +34,14 @@ type Server struct {
 	db        HistoryStore
 	log       zerolog.Logger
 	srv       *http.Server
-	OnResolve func() // called after _resolve to close the popup window
+	DiffStore *diff.Store
+	OnResolve func(id int64) // called after _resolve to close popup + diff windows
+	OnCancel  func(id int64) // called when notification cancelled (client disconnect)
+	OnOpenDiff func(id int64) // called by _open-diff to open diff window from Go side
 }
 
 func New(cfg *config.Config, d *dispatcher.Dispatcher, db HistoryStore, log zerolog.Logger) *Server {
-	return &Server{cfg: cfg, disp: d, db: db, log: log}
+	return &Server{cfg: cfg, disp: d, db: db, log: log, DiffStore: diff.NewStore()}
 }
 
 // Handler builds the HTTP routing tree. Endpoint paths, prefix, auth token,
@@ -56,6 +60,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(path.Join(prefix, "_history"), http.HandlerFunc(s.historyHandler))
 	mux.Handle(path.Join(prefix, "_history/delete"), http.HandlerFunc(s.historyDeleteHandler))
 	mux.Handle(path.Join(prefix, "_history/clear"), http.HandlerFunc(s.historyClearHandler))
+	// Diff viewer endpoints — no auth (localhost only).
+	mux.Handle(path.Join(prefix, "_diff"), http.HandlerFunc(s.diffDataHandler))
+	mux.Handle(path.Join(prefix, "_open-diff"), http.HandlerFunc(s.openDiffHandler))
+	mux.Handle(path.Join(prefix, "_resolve-partial"), http.HandlerFunc(s.resolvePartialHandler))
 	// Claude Code hooks endpoint — no auth (localhost only).
 	mux.Handle(path.Join(prefix, "claude/hook"), http.HandlerFunc(s.claudeHookHandler))
 	// Wrap only the notification endpoints with auth, not internal endpoints.
@@ -94,8 +102,9 @@ func (s *Server) resolveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.disp.Resolve(id, dispatcher.Result{Decision: decision})
+	s.DiffStore.Delete(id)
 	if s.OnResolve != nil {
-		s.OnResolve()
+		s.OnResolve(id)
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
@@ -226,7 +235,7 @@ func (s *Server) endpointHandler(ep config.EndpointConfig) http.Handler {
 				s.log.Warn().Int64("id", id).Msg("queue full, rejecting request")
 				w.WriteHeader(http.StatusServiceUnavailable)
 				_, _ = w.Write([]byte("queue full"))
-				_ = s.db.UpdateStatus(r.Context(), id, "cancelled", time.Now().UnixMilli())
+				_ = s.db.UpdateStatus(r.Context(), id, "cancelled", time.Now().UnixMilli(), 0)
 				return
 			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -236,16 +245,112 @@ func (s *Server) endpointHandler(ep config.EndpointConfig) http.Handler {
 		// Block until result, timeout, or client disconnect.
 		select {
 		case res := <-n.ResultCh:
-			_ = s.db.UpdateStatus(r.Context(), id, res.Decision, time.Now().UnixMilli())
+			_ = s.db.UpdateStatus(r.Context(), id, res.Decision, time.Now().UnixMilli(), 0)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(res.Decision))
 		case <-r.Context().Done():
 			s.disp.Cancel(n.ID)
+			s.DiffStore.Delete(n.ID)
+			if s.OnCancel != nil {
+				s.OnCancel(n.ID)
+			}
 			// Pull the authoritative decision. Resolve is once-guarded and ResultCh
 			// is buffered cap 1, so this read is guaranteed non-blocking.
 			res := <-n.ResultCh
-			_ = s.db.UpdateStatus(context.Background(), id, res.Decision, time.Now().UnixMilli())
+			_ = s.db.UpdateStatus(context.Background(), id, res.Decision, time.Now().UnixMilli(), 0)
 			// No HTTP response — client is gone.
 		}
 	})
+}
+
+// diffDataHandler returns the diff payload for a notification as JSON.
+// Used by the diff viewer frontend to fetch diff data.
+func (s *Server) diffDataHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	payload, ok := s.DiffStore.Get(id)
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// openDiffHandler is called by the popup to open a diff window. It triggers
+// the OnOpenDiff Go callback which creates a Wails WebView window.
+func (s *Server) openDiffHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if s.OnOpenDiff != nil {
+		s.OnOpenDiff(id)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+// partialResolveRequest is the JSON body sent by the diff viewer for partial
+// acceptance of changes.
+type partialResolveRequest struct {
+	AcceptedHunks []int  `json:"accepted_hunks"`
+	ToolName      string `json:"tool_name"`
+	FilePath      string `json:"file_path"`
+}
+
+// resolvePartialHandler applies only the accepted hunks to the file, resolves
+// the notification as "denied" (so Claude Code does not re-apply), and closes
+// both popup and diff windows.
+func (s *Server) resolvePartialHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var body partialResolveRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	payload, ok := s.DiffStore.Get(id)
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	if len(payload.Hunks) > 0 && payload.OldString != "" {
+		if err := diff.ApplyPartial(payload.FilePath, payload.OldString, payload.Hunks, body.AcceptedHunks); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	s.disp.Resolve(id, dispatcher.Result{Decision: "denied"})
+	s.DiffStore.Delete(id)
+	_ = s.db.UpdateStatus(r.Context(), id, "denied", time.Now().UnixMilli(), 0)
+	if s.OnResolve != nil {
+		s.OnResolve(id)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

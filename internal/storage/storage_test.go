@@ -42,7 +42,7 @@ func TestUpdateStatus(t *testing.T) {
 	s := openTestStorage(t)
 	ctx := context.Background()
 	id, _ := s.Insert(ctx, Record{Endpoint: "x", Title: "t", Message: "m", Status: "pending", CreatedAt: time.Now().UnixMilli()})
-	if err := s.UpdateStatus(ctx, id, "approved", time.Now().UnixMilli()); err != nil {
+	if err := s.UpdateStatus(ctx, id, "approved", time.Now().UnixMilli(), 0); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 	rec, _ := s.Get(ctx, id)
