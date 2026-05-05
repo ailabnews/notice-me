@@ -16,6 +16,7 @@ import (
 	"notify-me/internal/config"
 	"notify-me/internal/diff"
 	"notify-me/internal/dispatcher"
+	"notify-me/internal/policy"
 	"notify-me/internal/storage"
 )
 
@@ -35,13 +36,15 @@ type Server struct {
 	log       zerolog.Logger
 	srv       *http.Server
 	DiffStore *diff.Store
-	OnResolve func(id int64) // called after _resolve to close popup + diff windows
-	OnCancel  func(id int64) // called when notification cancelled (client disconnect)
+	policy    *policy.Engine
+	OnResolve  func(id int64) // called after _resolve to close popup + diff windows
+	OnCancel   func(id int64) // called when notification cancelled (client disconnect)
 	OnOpenDiff func(id int64) // called by _open-diff to open diff window from Go side
+	OnSessionAuth func(sessionID, toolName, pattern string) // called when popup sends auto_session decision
 }
 
-func New(cfg *config.Config, d *dispatcher.Dispatcher, db HistoryStore, log zerolog.Logger) *Server {
-	return &Server{cfg: cfg, disp: d, db: db, log: log, DiffStore: diff.NewStore()}
+func New(cfg *config.Config, d *dispatcher.Dispatcher, db HistoryStore, pol *policy.Engine, log zerolog.Logger) *Server {
+	return &Server{cfg: cfg, disp: d, db: db, policy: pol, log: log, DiffStore: diff.NewStore()}
 }
 
 // Handler builds the HTTP routing tree. Endpoint paths, prefix, auth token,
@@ -100,6 +103,10 @@ func (s *Server) resolveHandler(w http.ResponseWriter, r *http.Request) {
 	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
+	}
+	if decision == "auto_session" {
+		s.handleAutoSession(id)
+		decision = "approved"
 	}
 	s.disp.Resolve(id, dispatcher.Result{Decision: decision})
 	s.DiffStore.Delete(id)
@@ -353,4 +360,25 @@ func (s *Server) resolvePartialHandler(w http.ResponseWriter, r *http.Request) {
 		s.OnResolve(id)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleAutoSession creates a session-scoped policy rule when the popup sends
+// the "auto_session" decision, then delegates to the OnSessionAuth callback.
+func (s *Server) handleAutoSession(id int64) {
+	n := s.disp.GetInFlight(id)
+	if n == nil {
+		return
+	}
+	var pattern string
+	switch n.ToolName {
+	case "Bash":
+		pattern = policy.DerivePattern("Bash", n.ToolContent, "")
+	case "Edit", "Write":
+		pattern = policy.DerivePattern(n.ToolName, "", n.ToolContent)
+	default:
+		pattern = "*"
+	}
+	if s.OnSessionAuth != nil {
+		s.OnSessionAuth(n.SessionID, n.ToolName, pattern)
+	}
 }

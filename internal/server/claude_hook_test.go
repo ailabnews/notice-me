@@ -38,7 +38,7 @@ func newTestServer(t *testing.T, onActive func(*dispatcher.Notification)) (*Serv
 	ctx, cancel := context.WithCancel(context.Background())
 	go d.Run(ctx)
 
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	return s, d, cancel
 }
 
@@ -351,7 +351,7 @@ func TestClaudeHook_Stop_SkippedWhenDisabled(t *testing.T) {
 	go d.Run(ctx)
 	defer cancel()
 
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -467,7 +467,7 @@ func TestClaudeHook_NoAuthRequired(t *testing.T) {
 	defer cancel()
 	go d.Run(ctx)
 
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 

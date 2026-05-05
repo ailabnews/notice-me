@@ -158,7 +158,7 @@ func TestEndToEndApproved(t *testing.T) {
 	defer cancel()
 	go d.Run(ctx)
 
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -190,7 +190,7 @@ func TestEndToEndTimeout(t *testing.T) {
 	defer cancel()
 	go d.Run(ctx)
 
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -220,7 +220,7 @@ func TestEndToEndPaused(t *testing.T) {
 	go d.Run(ctx)
 	d.Pause()
 
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -249,7 +249,7 @@ func TestEndToEndClientDisconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go d.Run(ctx)
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -307,7 +307,7 @@ func TestTokenAuthRequired(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go d.Run(ctx)
-	s := New(cfg, d, &fakeStorage{}, zerolog.Nop())
+	s := New(cfg, d, &fakeStorage{}, nil, zerolog.Nop())
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 

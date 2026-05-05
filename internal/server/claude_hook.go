@@ -12,6 +12,7 @@ import (
 
 	"notify-me/internal/diff"
 	"notify-me/internal/dispatcher"
+	"notify-me/internal/policy"
 	"notify-me/internal/storage"
 )
 
@@ -172,6 +173,22 @@ func (s *Server) routeHookEvent(ctx context.Context, req *claudeHookRequest) cla
 
 func (s *Server) processPreToolUse(ctx context.Context, req *claudeHookRequest) claudeHookOutput {
 	toolInput := parseToolInput(req.ToolInput)
+
+	// Policy engine check: if a matching rule exists, auto-approve without popup.
+	if s.policy != nil {
+		content := extractContent(req.ToolName, toolInput)
+		if matched, rule := s.policy.Match(req.ToolName, req.SessionID, content); matched {
+			s.autoApprove(ctx, req, toolInput, rule.ID)
+			return claudeHookOutput{
+				HookSpecificOutput: &hookSpecificOutput{
+					HookEventName:         "PreToolUse",
+					PermissionDecision:    "allow",
+					PermissionDecisionRsn: "notify-me: auto-approved by policy rule",
+				},
+			}
+		}
+	}
+
 	title, message, okText, cancelText, mode := buildPreToolUsePopup(req, toolInput)
 
 	// Prepare diff data for Edit/Write tools.
@@ -202,7 +219,8 @@ func (s *Server) processPreToolUse(ctx context.Context, req *claudeHookRequest) 
 		TranscriptPath:   req.TranscriptPath,
 	}
 
-	result, err := s.blockingPopup(ctx, req.SessionID, title, message, okText, cancelText, mode, diffPayload, hi)
+	toolContent := extractContent(req.ToolName, toolInput)
+	result, err := s.blockingPopup(ctx, req.SessionID, title, message, okText, cancelText, mode, diffPayload, hi, toolContent)
 	if err != nil {
 		return claudeHookOutput{
 			HookSpecificOutput: &hookSpecificOutput{
@@ -231,6 +249,23 @@ func (s *Server) processPreToolUse(ctx context.Context, req *claudeHookRequest) 
 
 func (s *Server) processPermissionRequest(ctx context.Context, req *claudeHookRequest) claudeHookOutput {
 	toolInput := parseToolInput(req.ToolInput)
+
+	// Policy engine check: if a matching rule exists, auto-approve without popup.
+	if s.policy != nil {
+		content := extractContent(req.ToolName, toolInput)
+		if matched, rule := s.policy.Match(req.ToolName, req.SessionID, content); matched {
+			s.autoApprove(ctx, req, toolInput, rule.ID)
+			return claudeHookOutput{
+				HookSpecificOutput: &hookSpecificOutput{
+					HookEventName: "PermissionRequest",
+					Decision: &permissionDecision{
+						Behavior: "allow",
+					},
+				},
+			}
+		}
+	}
+
 	title := "权限请求: " + req.ToolName
 	message := formatToolMessage(req.ToolName, toolInput)
 	if message == "" {
@@ -244,7 +279,8 @@ func (s *Server) processPermissionRequest(ctx context.Context, req *claudeHookRe
 		TranscriptPath:   req.TranscriptPath,
 	}
 
-	result, err := s.blockingPopup(ctx, req.SessionID, title, message, "允许", "拒绝", dispatcher.ModeTwoButton, nil, hi)
+	toolContent := extractContent(req.ToolName, toolInput)
+	result, err := s.blockingPopup(ctx, req.SessionID, title, message, "允许", "拒绝", dispatcher.ModeTwoButton, nil, hi, toolContent)
 	if err != nil {
 		return claudeHookOutput{
 			HookSpecificOutput: &hookSpecificOutput{
@@ -299,7 +335,7 @@ func (s *Server) processNotification(req *claudeHookRequest) {
 		TranscriptPath: req.TranscriptPath,
 	}
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi, "")
 	}()
 }
 
@@ -319,7 +355,7 @@ func (s *Server) processStop(req *claudeHookRequest) {
 		TranscriptPath: req.TranscriptPath,
 	}
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi, "")
 	}()
 }
 
@@ -337,7 +373,7 @@ func (s *Server) processStopFailure(req *claudeHookRequest) {
 		TranscriptPath: req.TranscriptPath,
 	}
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi, "")
 	}()
 }
 
@@ -371,7 +407,7 @@ func (s *Server) processInteractiveTool(req *claudeHookRequest) {
 	}
 
 	go func() {
-		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi)
+		_, _ = s.blockingPopup(context.Background(), req.SessionID, title, message, "知道了", "", dispatcher.ModeSingleButton, nil, hi, "")
 	}()
 }
 
@@ -390,7 +426,7 @@ type hookInfo struct {
 // "approved", "denied", "acknowledged", "timeout", or "cancelled".
 // The popup sends the button label as the decision; we normalize it here
 // so callers always get a stable value regardless of locale/button text.
-func (s *Server) blockingPopup(ctx context.Context, sessionID, title, message, okText, cancelText string, mode dispatcher.Mode, diffPayload *diff.DiffPayload, hi *hookInfo) (string, error) {
+func (s *Server) blockingPopup(ctx context.Context, sessionID, title, message, okText, cancelText string, mode dispatcher.Mode, diffPayload *diff.DiffPayload, hi *hookInfo, toolContent string) (string, error) {
 	if s.disp.IsPaused() {
 		return "", fmt.Errorf("server paused")
 	}
@@ -413,6 +449,9 @@ func (s *Server) blockingPopup(ctx context.Context, sessionID, title, message, o
 		n.HookEvent = hi.HookEvent
 		n.TranscriptPath = hi.TranscriptPath
 	}
+
+	n.SessionID = sessionID
+	n.ToolContent = toolContent
 
 	if diffPayload != nil {
 		n.HasDiff = true
@@ -648,6 +687,35 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+// extractContent extracts the policy-relevant content from tool input fields.
+func extractContent(toolName string, ti claudeToolInput) string {
+	return policy.ExtractContent(toolName, ti.Command, ti.FilePath)
+}
+
+// autoApprove inserts a notification record marked as auto_approved with the
+// matching rule ID, bypassing the popup entirely.
+func (s *Server) autoApprove(ctx context.Context, req *claudeHookRequest, ti claudeToolInput, ruleID int64) {
+	now := time.Now().UnixMilli()
+	id, err := s.db.Insert(ctx, storage.Record{
+		Endpoint:         "claude/hook",
+		Title:            "确认执行: " + req.ToolName,
+		Message:          formatToolMessage(req.ToolName, ti),
+		SourceIP:         "127.0.0.1",
+		SourceHeader:     "claude-hook",
+		SessionID:        req.SessionID,
+		ToolName:         req.ToolName,
+		ToolInputSummary: truncate(formatToolMessage(req.ToolName, ti), 200),
+		HookEvent:        req.HookEventName,
+		TranscriptPath:   req.TranscriptPath,
+		Status:           "auto_approved",
+		CreatedAt:        now,
+	})
+	if err != nil {
+		return
+	}
+	_ = s.db.UpdateStatus(ctx, id, "auto_approved", now, ruleID)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
