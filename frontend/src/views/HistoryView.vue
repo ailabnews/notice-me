@@ -25,7 +25,7 @@
               <td>{{ formatTs(r.created_at) }}</td>
               <td>{{ r.endpoint }}</td>
               <td :title="r.title">{{ r.title }}</td>
-              <td class="muted">{{ r.source_ip || '-' }}</td>
+              <td class="muted">{{ sourceLabel(r.source_header, r.source_ip) }}</td>
               <td><span class="badge" :data-status="badgeStatus(r.status)">{{ statusText(r.status) }}</span></td>
               <td>{{ formatDuration(r.duration_ms) }}</td>
               <td><button class="icon-btn" @click.stop="store.deleteRecord(r.id)" title="删除">&times;</button></td>
@@ -48,7 +48,7 @@
           <div class="detail-row"><label>状态</label><span class="badge" :data-status="badgeStatus(store.detail.status)">{{ statusText(store.detail.status) }}</span></div>
           <div class="detail-row"><label>端点</label><span>{{ store.detail.endpoint }}</span></div>
           <div class="detail-row"><label>标题</label><span>{{ store.detail.title }}</span></div>
-          <div class="detail-row"><label>消息</label><pre class="detail-message">{{ store.detail.message }}</pre></div>
+          <div class="detail-row"><label>消息</label><div class="detail-message markdown-body" v-html="renderMd(store.detail.message)"></div></div>
           <div class="detail-row"><label>来源 IP</label><span>{{ store.detail.source_ip || '-' }}</span></div>
           <div class="detail-row"><label>来源头</label><span>{{ store.detail.source_header || '-' }}</span></div>
           <div class="detail-row"><label>创建时间</label><span>{{ formatTs(store.detail.created_at) }}</span></div>
@@ -71,6 +71,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useHistory } from '../stores/history'
+import { renderMd } from '../markdown'
 
 const store = useHistory()
 
@@ -99,6 +100,11 @@ function formatDuration(ms: number | null): string {
   const min = Math.floor(ms / 60_000)
   const sec = Math.floor((ms % 60_000) / 1000)
   return min + 'm' + (sec > 0 ? sec + 's' : '')
+}
+
+function sourceLabel(header: string, ip: string): string {
+  if (header === 'claude-hook') return 'Claude Code'
+  return ip || '-'
 }
 
 function confirmClear() {
@@ -263,17 +269,48 @@ onUnmounted(() => {
 }
 .detail-message {
   margin: 0;
-  white-space: pre-wrap;
   word-break: break-word;
-  font-family: inherit;
   font-size: 13px;
+  line-height: 1.5;
   background: #fff;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 4px;
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
 }
+.detail-message > *:first-child { margin-top: 0; }
+.detail-message > *:last-child { margin-bottom: 0; }
+.detail-message p { margin: 0 0 6px; }
+.detail-message h1, .detail-message h2, .detail-message h3,
+.detail-message h4, .detail-message h5, .detail-message h6 {
+  margin: 8px 0 4px; font-weight: 600;
+}
+.detail-message h1 { font-size: 15px; }
+.detail-message h2 { font-size: 14px; }
+.detail-message h3, .detail-message h4 { font-size: 13px; }
+.detail-message strong { font-weight: 600; }
+.detail-message code {
+  background: #e5e7eb; padding: 1px 4px; border-radius: 3px;
+  font-family: ui-monospace, monospace; font-size: 12px;
+}
+.detail-message pre {
+  background: #1e1e2e; color: #cdd6f4; padding: 8px 10px; border-radius: 5px;
+  overflow-x: auto; margin: 4px 0; line-height: 1.4;
+}
+.detail-message pre code {
+  background: none; padding: 0; font-size: 12px;
+}
+.detail-message ul, .detail-message ol { margin: 4px 0; padding-left: 20px; }
+.detail-message li { margin: 2px 0; }
+.detail-message blockquote {
+  border-left: 3px solid #d1d5db; padding: 2px 8px; margin: 4px 0; color: #4b5563;
+}
+.detail-message table { border-collapse: collapse; width: 100%; margin: 4px 0; font-size: 12px; }
+.detail-message th, .detail-message td { border: 1px solid #d1d5db; padding: 3px 6px; text-align: left; }
+.detail-message th { background: #f3f4f6; font-weight: 600; }
+.detail-message hr { border: none; border-top: 1px solid #d1d5db; margin: 6px 0; }
+.detail-message a { color: #2563eb; }
 .detail-actions {
   padding: 8px 12px;
   border-top: 1px solid #e5e7eb;

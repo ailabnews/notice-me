@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -14,6 +15,12 @@ import (
 var assets embed.FS
 
 func main() {
+	// Subcommand: "notify-me hook" — IPC client, no GUI needed.
+	if len(os.Args) > 1 && os.Args[1] == "hook" {
+		runHook()
+		return
+	}
+
 	cfg, cfgErr := config.LoadOrInit()
 	log := logger.New(cfg)
 

@@ -25,6 +25,8 @@ func defaults() *Config {
 			DefaultTimeoutSeconds: 180,
 			TimeoutAction:         "timeout",
 			SoundEnabled:          true,
+			BlinkEnabled:          true,
+			StopHookEnabled:       true,
 			Autostart:             false,
 			MinimizeToTrayOnClose: true,
 		},

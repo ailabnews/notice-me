@@ -56,7 +56,7 @@ func TestIPCActivate(t *testing.T) {
 	closer, err := listenIPC(sock, func() {
 		fired.Add(1)
 		wg.Done()
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

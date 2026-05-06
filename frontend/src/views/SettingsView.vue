@@ -20,10 +20,8 @@ const store = useSettings()
 const local = ref('')
 
 onMounted(async () => {
-  if (window.go?.main?.App?.GetConfig) {
-    await store.load()
-    local.value = store.raw
-  }
+  await store.load()
+  local.value = store.raw
 })
 
 watch(local, (v) => store.edit(v))

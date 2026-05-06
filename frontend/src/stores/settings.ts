@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
+import { Call } from '@wailsio/runtime'
 
 export const useSettings = defineStore('settings', {
   state: () => ({ raw: '', dirty: false, saving: false, error: '' }),
   actions: {
     async load() {
-      this.raw = await window.go.main.App.GetConfig()
+      this.raw = await Call.ByName('main.App.GetConfig')
       this.dirty = false
     },
     edit(next: string) {
@@ -15,7 +16,7 @@ export const useSettings = defineStore('settings', {
       this.saving = true
       this.error = ''
       try {
-        await window.go.main.App.SetConfig(this.raw)
+        await Call.ByName('main.App.SetConfig', this.raw)
         this.dirty = false
       } catch (e: any) {
         this.error = e?.message ?? String(e)

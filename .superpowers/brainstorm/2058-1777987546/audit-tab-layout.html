@@ -1,0 +1,32 @@
+<h2>审核 Tab 布局方案</h2>
+<p class="subtitle">选择一个你喜欢的布局方式</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>上下分区 + 表格</h3>
+      <p>上方：全局策略引擎（表格形式，可排序筛选）</p>
+      <p>下方：会话免审批列表（表格形式，按会话分组）</p>
+      <p>适合规则较多的场景，信息密度高</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>左右分栏 + 卡片</h3>
+      <p>左侧：全局策略引擎（卡片列表，拖拽排序）</p>
+      <p>右侧：会话免审批列表（按会话分组的卡片）</p>
+      <p>视觉效果好，适合规则数量适中的场景</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>子 Tab 切换 + 紧凑列表</h3>
+      <p>审核 Tab 内再分两个子 Tab：「策略引擎」和「会话规则」</p>
+      <p>每个子 Tab 用紧凑的可折叠列表展示规则</p>
+      <p>空间利用最高，适合窗口较小的场景</p>
+    </div>
+  </div>
+</div>

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +52,8 @@ type BehaviorConfig struct {
 	DefaultTimeoutSeconds int    `json:"default_timeout_seconds"`
 	TimeoutAction         string `json:"timeout_action"`
 	SoundEnabled          bool   `json:"sound_enabled"`
+	BlinkEnabled          bool   `json:"blink_enabled"`
+	StopHookEnabled       bool   `json:"stop_hook_enabled"`
 	Autostart             bool   `json:"autostart"`
 	MinimizeToTrayOnClose bool   `json:"minimize_to_tray_on_close"`
 }
@@ -90,9 +93,24 @@ func LoadOrInit() (*Config, error) {
 		_ = d.Save()
 		return d, fmt.Errorf("config corrupted, defaults loaded; original moved to %s", broken)
 	}
+	// Migrate new fields: existing configs won't have blink_enabled, so Go
+	// unmarshals the missing bool as false. Detect this and apply the true default.
+	migrated := false
+	if !jsonPresent(raw, "blink_enabled") {
+		cfg.Behavior.BlinkEnabled = true
+		migrated = true
+	}
+	if !jsonPresent(raw, "stop_hook_enabled") {
+		cfg.Behavior.StopHookEnabled = true
+		migrated = true
+	}
 	cfg.mu = &sync.RWMutex{}
+	if migrated {
+		_ = (&cfg).Save()
+	}
 	return &cfg, nil
 }
+
 
 func (c *Config) Save() error {
 	p, err := FilePath("config.json")
@@ -125,6 +143,10 @@ func (c *Config) Snapshot() Config {
 		Log:       c.Log,
 	}
 	return cp
+}
+
+func jsonPresent(raw []byte, field string) bool {
+	return bytes.Contains(raw, []byte(`"`+field+`"`))
 }
 
 // Apply replaces the live config under the lock.

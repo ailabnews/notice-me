@@ -1,12 +1,17 @@
 package singleton
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"notify-me/internal/config"
 )
+
+// HookHandler processes a Claude Code hook request received over IPC.
+// body is the raw JSON from the hook. Returns the response JSON.
+type HookHandler func(ctx context.Context, body []byte) ([]byte, error)
 
 // AcquireOrActivate tries to acquire the singleton file lock. If another
 // instance holds it, it sends a UDS / loopback-TCP nudge so the existing
@@ -31,19 +36,43 @@ func AcquireOrActivate(cfg *config.Config) (alreadyRunning bool, err error) {
 }
 
 // ListenForActivation spins up an IPC endpoint (Unix socket on macOS/Linux,
-// loopback TCP on Windows) that calls onActivate when nudged.
+// loopback TCP on Windows) that handles two message types:
+//   - activation nudge → calls onActivate
+//   - hook request (JSON with hook_event_name) → calls onHook
+//
 // Caller must invoke the returned closer at shutdown.
-func ListenForActivation(onActivate func()) (closer func(), err error) {
+func ListenForActivation(onActivate func(), onHook HookHandler) (closer func(), err error) {
 	dir, err := config.ConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return listenIPC(filepath.Join(dir, ".sock"), onActivate)
+	return listenIPC(filepath.Join(dir, ".sock"), onActivate, onHook)
 }
 
 // Release releases the file lock held by this process. Caller should invoke
 // at shutdown.
 func Release() error { return release() }
+
+// HookIPC sends a hook request to the running daemon via IPC and returns
+// the response. Used by the "notify-me hook" CLI subcommand.
+func HookIPC(body []byte) ([]byte, error) {
+	dir, err := config.ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return hookIPC(filepath.Join(dir, ".sock"), body)
+}
+
+// HookIPCCancel is like HookIPC but closes the IPC connection when ctx is
+// cancelled, allowing the caller to abandon the request (e.g. when terminal
+// input arrives first).
+func HookIPCCancel(ctx context.Context, body []byte) ([]byte, error) {
+	dir, err := config.ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return hookIPCCancel(ctx, filepath.Join(dir, ".sock"), body)
+}
 
 // nudge connects to the IPC endpoint and sends the activate command.
 func nudge(dir string) error {
