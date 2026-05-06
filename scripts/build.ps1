@@ -17,5 +17,5 @@ if (-not (Test-Path frontend/dist/.gitkeep)) {
   New-Item -Path frontend/dist/.gitkeep -ItemType File | Out-Null
 }
 
-wails3 build -platform windows/amd64
+wails3 build
 Write-Host "Windows build at: build\bin\notify-me.exe"
