@@ -179,6 +179,7 @@ body { margin: 0; user-select: none; }
 
 /* Hook not installed */
 .hook-not-installed { font-size: 13px; color: #9ca3af; text-align: center; padding: 10px 0; }
+.hook-loading { font-size: 13px; color: #9ca3af; text-align: center; padding: 10px 0; }
 
 /* Buttons */
 .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 12px; cursor: pointer; font-weight: 500; transition: opacity .15s; }

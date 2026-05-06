@@ -83,6 +83,7 @@
           请先安装 Claude Code CLI，然后刷新此页面。
         </div>
       </div>
+      <div v-else class="hook-loading">检测中...</div>
     </div>
 
     <!-- HTTP config dialog -->
@@ -211,7 +212,11 @@ const showTranscriptDialog = ref(false)
 const transcriptLoading = ref(false)
 
 onMounted(async () => {
-  await Promise.all([store.loadToggles(), store.loadHookStatus(), store.loadStats()])
+  await Promise.allSettled([
+    store.loadToggles().catch((e: any) => console.error('[notify-me] loadToggles:', e)),
+    store.loadHookStatus().catch((e: any) => console.error('[notify-me] loadHookStatus:', e)),
+    store.loadStats().catch((e: any) => console.error('[notify-me] loadStats:', e)),
+  ])
   store.startAutoRefresh(5000)
 })
 onUnmounted(() => { store.stopAutoRefresh() })

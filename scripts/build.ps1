@@ -2,11 +2,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
-if (-not (Get-Command wails3 -ErrorAction SilentlyContinue)) {
-  Write-Host "Installing wails3 CLI..."
-  go install github.com/wailsapp/wails/v3/cmd/wails3@latest
-}
-
 Push-Location frontend
   npm install --no-audit --no-fund
   npm run build
@@ -17,5 +12,12 @@ if (-not (Test-Path frontend/dist/.gitkeep)) {
   New-Item -Path frontend/dist/.gitkeep -ItemType File | Out-Null
 }
 
-wails3 build
+# Build with CGO enabled (WebView2 requires it).
+$env:CGO_ENABLED = '1'
+
+if (-not (Test-Path 'build\bin')) {
+  New-Item -Path 'build\bin' -ItemType Directory | Out-Null
+}
+
+go build -ldflags="-H windowsgui" -o build\bin\notify-me.exe .
 Write-Host "Windows build at: build\bin\notify-me.exe"

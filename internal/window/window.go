@@ -48,7 +48,7 @@ func (m *Manager) MountMain() {
 		Height:           480,
 		URL:              "/index.html",
 		BackgroundColour: application.NewRGB(255, 255, 255),
-		Hidden:           true,
+		Hidden:           false,
 	})
 	// RegisterHook runs synchronously and supports event.Cancel() to suppress
 	// the framework's default close-and-destroy behaviour. OnWindowEvent fires
@@ -162,6 +162,7 @@ func (m *Manager) OpenPopup(payload map[string]any) {
 	})
 	m.popup = popup
 	m.mu.Unlock()
+	popup.Focus()
 }
 
 // ClosePopup tears down the active popup window, if any.

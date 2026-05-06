@@ -3,10 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <title>notify-me confirm</title>
-    <script type="module" crossorigin src="/assets/popup-BCyuQMeW.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/runtime-dom.esm-bundler-D3YbddaS.js">
-    <link rel="modulepreload" crossorigin href="/assets/markdown-C54M-8X2.js">
-    <link rel="stylesheet" crossorigin href="/assets/markdown-BLFRhvhD.css">
+    <script type="module" src="/assets/popup-6M60I8eR.js"></script>
+    <link rel="modulepreload" href="/assets/runtime-dom.esm-bundler-D3YbddaS.js">
+    <link rel="modulepreload" href="/assets/markdown-DYDMKAex.js">
+    <link rel="stylesheet" href="/assets/markdown-CMwTLlDf.css">
   </head>
-  <body><div id="popup"></div></body>
+  <body>
+    <div id="popup"></div>
+    <script>
+      window.onerror = function(msg, src, line, col, err) {
+        var d = document.createElement('pre');
+        d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#fee;color:#c00;padding:8px;font-size:12px;z-index:99999;white-space:pre-wrap;margin:0';
+        d.textContent = 'JS ERROR: ' + msg + (src ? ' (' + src + ':' + line + ':' + col + ')' : '');
+        document.body.appendChild(d);
+      };
+    </script>
+  </body>
 </html>
