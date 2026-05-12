@@ -59,6 +59,8 @@ type App struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	cleanup []func()
+
+	shutdownOnce sync.Once
 }
 
 func NewApp(cfg *config.Config, log zerolog.Logger) *App {
@@ -151,6 +153,9 @@ func (a *App) Boot(w *application.App) {
 	} else {
 		a.cleanup = append(a.cleanup, closer)
 	}
+
+	// Auto-configure hooks when Claude Code is detected.
+	go a.autoConfigureHooks()
 
 	// Tray is mounted last so its handlers close over fully-initialised
 	// subsystems (dispatcher, window manager, server). OnQuit runs the same
@@ -295,6 +300,32 @@ func (a *App) ShowMain() {
 }
 
 // ===== Quick toggles & Home tab data =====
+
+// autoConfigureHooks checks if Claude Code is installed and configures
+// stdio-mode hooks automatically when the app starts.
+func (a *App) autoConfigureHooks() {
+	status, err := claudeconfig.GetStatus()
+	if err != nil {
+		a.log.Warn().Err(err).Msg("auto-configure: hook status check failed")
+		return
+	}
+	if !status.Installed {
+		a.log.Info().Msg("auto-configure: Claude Code not detected, skipping")
+		return
+	}
+	if status.Configured {
+		a.log.Info().Msg("auto-configure: hooks already configured, skipping")
+		return
+	}
+	snap := a.cfg.Snapshot()
+	httpURL := fmt.Sprintf("http://%s:%d%s/claude/hook",
+		snap.Server.Host, snap.Server.Port, snap.Server.EndpointPrefix)
+	if err := claudeconfig.Configure("stdio", httpURL, snap.Behavior.StopHookEnabled); err != nil {
+		a.log.Error().Err(err).Msg("auto-configure: failed")
+		return
+	}
+	a.log.Info().Msg("auto-configure: stdio hooks configured")
+}
 
 // GetQuickToggles returns sound_enabled, blink_enabled and stop_hook_enabled as JSON.
 func (a *App) GetQuickToggles() string {
@@ -485,27 +516,37 @@ func (a *App) onNotificationResolved() {
 	}
 }
 
-// Shutdown unwinds the runtime subsystems in dependency order: server first
-// (so no new dispatcher work arrives), then context cancel (which drains the
-// dispatcher's in-flight notifications), then SQLite.
+// Shutdown unwinds the runtime subsystems in dependency order: hooks removed
+// first (so Claude Code stops calling a dead server), then server, context,
+// and finally SQLite. Safe to call multiple times (idempotent via sync.Once).
 func (a *App) Shutdown() {
-	a.stopBlinking()
-	if a.win != nil {
-		a.win.CloseAllDiff()
-	}
-	if a.server != nil {
-		_ = a.server.Stop(context.Background())
-	}
-	_ = singleton.Release()
-	if a.cancel != nil {
-		a.cancel()
-	}
-	if a.db != nil {
-		_ = a.db.Close()
-	}
-	for _, fn := range a.cleanup {
-		fn()
-	}
+	a.shutdownOnce.Do(func() {
+		a.stopBlinking()
+
+		// Remove hooks so Claude Code doesn't try to reach a stopped server.
+		if err := claudeconfig.Remove(); err != nil {
+			a.log.Warn().Err(err).Msg("shutdown: failed to remove hooks")
+		} else {
+			a.log.Info().Msg("shutdown: hooks removed")
+		}
+
+		if a.win != nil {
+			a.win.CloseAllDiff()
+		}
+		if a.server != nil {
+			_ = a.server.Stop(context.Background())
+		}
+		_ = singleton.Release()
+		if a.cancel != nil {
+			a.cancel()
+		}
+		if a.db != nil {
+			_ = a.db.Close()
+		}
+		for _, fn := range a.cleanup {
+			fn()
+		}
+	})
 }
 
 // ===== Policy rule management (Wails methods) =====

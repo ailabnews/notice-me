@@ -90,7 +90,14 @@ export const useHome = defineStore('home', {
     },
     async loadStats() {
       const raw: string = await Call.ByName('main.App.DashboardStats')
-      this.stats = JSON.parse(raw)
+      const parsed = JSON.parse(raw)
+      this.stats = {
+        tool_usage: parsed?.tool_usage ?? [],
+        decisions: parsed?.decisions ?? { approved: 0, denied: 0, timeout: 0, cancelled: 0, other: 0 },
+        avg_response_ms: parsed?.avg_response_ms ?? 0,
+        sessions: parsed?.sessions ?? [],
+        total: parsed?.total ?? 0,
+      }
     },
     async loadTimeline(sessionId: string) {
       this.activeSessionId = sessionId

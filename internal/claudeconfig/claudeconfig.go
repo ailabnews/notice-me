@@ -44,7 +44,9 @@ func GetStatus() (*HookStatus, error) {
 	status := &HookStatus{SettingsPath: p}
 
 	// Detect Claude Code binary.
-	if path, err := exec.LookPath("claude"); err == nil {
+	// macOS .app bundles inherit a minimal PATH, so we also search via
+	// the user's login shell and common installation directories.
+	if path := findClaude(); path != "" {
 		status.Installed = true
 		status.BinaryPath = path
 		status.ClaudeVersion = detectClaudeVersion(path)
@@ -224,6 +226,49 @@ func Remove() error {
 }
 
 // ─── helpers ───
+
+// findClaude locates the Claude Code binary. It tries:
+//  1. exec.LookPath (works when launched from a terminal)
+//  2. The user's login shell (handles macOS .app bundles)
+//  3. Common absolute paths as a last resort
+func findClaude() string {
+	// Fast path: standard PATH lookup.
+	if p, err := exec.LookPath("claude"); err == nil {
+		return p
+	}
+
+	// macOS .app bundles get a sterile PATH. Ask the user's login shell.
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, shell, "-l", "-c", "which claude").Output(); err == nil {
+		if p := strings.TrimSpace(string(out)); p != "" && !strings.HasPrefix(p, "which:") {
+			return p
+		}
+	}
+
+	// Fallback: common installation directories.
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		"/usr/local/bin/claude",
+		"/opt/homebrew/bin/claude",
+	}
+	if home != "" {
+		candidates = append(candidates,
+			filepath.Join(home, ".npm/bin/claude"),
+			filepath.Join(home, ".local/bin/claude"),
+		)
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
 
 func containsNM(s string) bool {
 	return len(s) > 0 && (contains(s, "127.0.0.1:1886") || contains(s, "notify-me") || contains(s, "notify_me"))

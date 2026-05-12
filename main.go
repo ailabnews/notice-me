@@ -50,6 +50,9 @@ func main() {
 	app.Boot(wailsApp)
 
 	if err := wailsApp.Run(); err != nil {
+		app.Shutdown()
 		log.Fatal().Err(err).Msg("wails run failed")
 	}
+	// Ensure cleanup runs for any exit path (Dock quit, Cmd+Q, window close).
+	app.Shutdown()
 }
