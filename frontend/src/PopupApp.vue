@@ -41,7 +41,7 @@ onMounted(() => {
   cancelText.value = p.get('cancel_text') || ''
   mode.value = (p.get('mode') as any) || 'two-button'
   hasDiff.value = p.get('has_diff') === 'true'
-  hasSessionAuth.value = p.get('has_session_auth') === 'true'
+  // temporarily disabled: hasSessionAuth.value = p.get('has_session_auth') === 'true'
   const port = p.get('port') || '1886'
   const prefix = (p.get('prefix') || '/api').replace(/\/+$/, '')
   serverBase = `http://127.0.0.1:${port}${prefix}`
