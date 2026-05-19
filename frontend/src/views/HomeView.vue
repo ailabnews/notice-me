@@ -16,6 +16,17 @@
       <div class="toggle-error" v-if="store.lastError">{{ store.lastError }}</div>
     </div>
 
+    <!-- PATH warning -->
+    <div class="home-card path-warning" v-if="store.hookStatus?.installed && !store.pathStatus.in_path">
+      <div class="path-warning-content">
+        <div>
+          <div class="card-title">环境变量未配置</div>
+          <div class="path-warning-desc">notify-me 未加入系统 PATH，stdio 模式的 Hook 将无法正常工作。</div>
+        </div>
+        <t-button theme="warning" @click="doEnsureInPath">一键配置</t-button>
+      </div>
+    </div>
+
     <!-- Hook Config Card -->
     <div class="home-card">
       <h3 class="card-title">Claude Code Hook</h3>
@@ -215,6 +226,7 @@ onMounted(async () => {
   await Promise.allSettled([
     store.loadToggles().catch((e: any) => console.error('[notify-me] loadToggles:', e)),
     store.loadHookStatus().catch((e: any) => console.error('[notify-me] loadHookStatus:', e)),
+    store.loadPathStatus().catch((e: any) => console.error('[notify-me] loadPathStatus:', e)),
     store.loadStats().catch((e: any) => console.error('[notify-me] loadStats:', e)),
   ])
   store.startAutoRefresh(5000)
@@ -232,6 +244,13 @@ async function doRemoveHooks() {
   await store.removeHooks()
   if (!store.lastError) {
     MessagePlugin.success('Hook 配置已移除')
+  }
+}
+
+async function doEnsureInPath() {
+  await store.ensureInPath()
+  if (!store.lastError) {
+    MessagePlugin.success('环境变量配置成功')
   }
 }
 

@@ -23,6 +23,8 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         popup: resolve(__dirname, 'popup.html'),
         diff: resolve(__dirname, 'diff.html'),
+        feedback: resolve(__dirname, 'feedback.html'),
+        about: resolve(__dirname, 'about.html'),
       },
     },
   },

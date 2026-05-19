@@ -56,6 +56,10 @@
           <div class="detail-row"><label>耗时</label><span>{{ formatDuration(store.detail.duration_ms) }}</span></div>
         </div>
         <div class="detail-actions">
+          <template v-if="store.detail.status === 'pending'">
+            <button class="resolve-btn approve" @click="resolve('approved')">允许</button>
+            <button class="resolve-btn deny" @click="resolve('denied')">拒绝</button>
+          </template>
           <button @click="store.deleteRecord(store.detail!.id)" class="danger-btn">删除此记录</button>
         </div>
       </div>
@@ -111,6 +115,11 @@ function confirmClear() {
   if (window.confirm('确定清空所有通知记录？此操作不可撤销。')) {
     store.clearAll()
   }
+}
+
+function resolve(decision: string) {
+  if (!store.detail) return
+  store.resolveRecord(store.detail.id, decision)
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -314,6 +323,32 @@ onUnmounted(() => {
 .detail-actions {
   padding: 8px 12px;
   border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.resolve-btn {
+  flex: 1;
+  padding: 6px 0;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.resolve-btn.approve {
+  background: #dcfce7;
+  color: #166534;
+}
+.resolve-btn.approve:hover {
+  background: #bbf7d0;
+}
+.resolve-btn.deny {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.resolve-btn.deny:hover {
+  background: #fee2e2;
 }
 
 /* Loading overlay */

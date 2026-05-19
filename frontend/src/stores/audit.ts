@@ -30,7 +30,12 @@ export const useAudit = defineStore('audit', {
       this.error = ''
       try {
         const raw = await Call.ByName('main.App.GetPolicyRules')
-        this.rules = JSON.parse((raw as string) || '[]')
+        const parsed = JSON.parse((raw as string) || '[]')
+        if (parsed && parsed.error) {
+          this.error = parsed.error
+        } else {
+          this.rules = Array.isArray(parsed) ? parsed : []
+        }
       } catch (e: any) {
         this.error = e?.message ?? String(e)
       } finally {

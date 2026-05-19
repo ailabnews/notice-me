@@ -20,10 +20,12 @@ type Manager struct {
 	app *application.App
 	cfg *config.Config
 
-	mu    sync.Mutex
-	main  *application.WebviewWindow
-	popup *application.WebviewWindow
-	diff  map[int64]*application.WebviewWindow
+	mu       sync.Mutex
+	main     *application.WebviewWindow
+	popup    *application.WebviewWindow
+	diff     map[int64]*application.WebviewWindow
+	feedback *application.WebviewWindow
+	about    *application.WebviewWindow
 }
 
 func NewManager(app *application.App, cfg *config.Config) *Manager {
@@ -275,6 +277,111 @@ func (m *Manager) CloseAllDiff() {
 	m.diff = make(map[int64]*application.WebviewWindow)
 	m.mu.Unlock()
 	for _, w := range windows {
+		w.Close()
+	}
+}
+
+// OpenFeedbackWindow creates an always-on-top window for user feedback.
+func (m *Manager) OpenFeedbackWindow() {
+	m.mu.Lock()
+	if m.feedback != nil {
+		w := m.feedback
+		m.mu.Unlock()
+		w.Focus()
+		return
+	}
+	win := m.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:                 "feedback",
+		Title:                "问题反馈",
+		Width:                480,
+		Height:               460,
+		URL:                  "/feedback.html",
+		AlwaysOnTop:          true,
+		DisableResize:        false,
+		Hidden:               false,
+		InitialPosition:      application.WindowCentered,
+		MinimiseButtonState:  application.ButtonHidden,
+		MaximiseButtonState:  application.ButtonHidden,
+		BackgroundColour:     application.NewRGB(255, 255, 255),
+		Mac: application.MacWindow{
+			WindowLevel: application.MacWindowLevelFloating,
+			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
+				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
+		},
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar: true,
+		},
+	})
+	// Clean up reference when the window is closed.
+	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		m.mu.Lock()
+		m.feedback = nil
+		m.mu.Unlock()
+	})
+	m.feedback = win
+	m.mu.Unlock()
+	win.Focus()
+}
+
+// CloseFeedbackWindow closes the feedback window if open.
+func (m *Manager) CloseFeedbackWindow() {
+	m.mu.Lock()
+	w := m.feedback
+	m.feedback = nil
+	m.mu.Unlock()
+	if w != nil {
+		w.Close()
+	}
+}
+
+// OpenAboutWindow creates a centered window showing the about page.
+func (m *Manager) OpenAboutWindow() {
+	m.mu.Lock()
+	if m.about != nil {
+		w := m.about
+		m.mu.Unlock()
+		w.Focus()
+		return
+	}
+	win := m.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:                 "about",
+		Title:                "关于我们",
+		Width:                400,
+		Height:               520,
+		URL:                  "/about.html",
+		AlwaysOnTop:          true,
+		DisableResize:        true,
+		Hidden:               false,
+		InitialPosition:      application.WindowCentered,
+		MinimiseButtonState:  application.ButtonHidden,
+		MaximiseButtonState:  application.ButtonHidden,
+		BackgroundColour:     application.NewRGB(255, 255, 255),
+		Mac: application.MacWindow{
+			WindowLevel: application.MacWindowLevelFloating,
+			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
+				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
+		},
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar: true,
+		},
+	})
+	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		m.mu.Lock()
+		m.about = nil
+		m.mu.Unlock()
+	})
+	m.about = win
+	m.mu.Unlock()
+	win.Focus()
+}
+
+// CloseAboutWindow closes the about window if open.
+func (m *Manager) CloseAboutWindow() {
+	m.mu.Lock()
+	w := m.about
+	m.about = nil
+	m.mu.Unlock()
+	if w != nil {
 		w.Close()
 	}
 }

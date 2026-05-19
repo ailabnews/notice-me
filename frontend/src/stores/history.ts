@@ -85,6 +85,12 @@ export const useHistory = defineStore('history', {
       this.page = 0
       this.load()
     },
+    async resolveRecord(id: number, decision: string) {
+      try {
+        await fetch(`${base}/_resolve?id=${id}&decision=${decision}`, { method: 'POST' })
+      } catch { /* ignore */ }
+      this.load()
+    },
     startAutoRefresh(ms = 5000) {
       this.stopAutoRefresh()
       this._timer = setInterval(() => this.load(), ms)

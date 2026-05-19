@@ -4,7 +4,7 @@
     <nav class="tabs">
       <button :class="{ active: tab === 'home' }" @click="tab = 'home'">首页</button>
       <button :class="{ active: tab === 'history' }" @click="tab = 'history'">通知历史</button>
-      <button :class="{ active: tab === 'audit' }" @click="tab = 'audit'">审核</button>
+      <!-- <button :class="{ active: tab === 'audit' }" @click="tab = 'audit'">审核</button> -->
       <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">设置</button>
     </nav>
     <section class="content">

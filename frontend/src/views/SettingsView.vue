@@ -42,7 +42,7 @@ async function save() {
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   gap: 8px;
-  height: 100%;
+  height: calc(100vh - 75px);
 }
 .hint {
   color: #6b7280;

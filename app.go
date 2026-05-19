@@ -10,7 +10,11 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +54,7 @@ type App struct {
 	policy *policy.Engine
 	win    *window.Manager
 	tray   *application.SystemTray
+	wails  *application.App
 	banner string
 
 	alertIcon []byte
@@ -80,6 +85,7 @@ func (a *App) Banner() string { return a.banner }
 // quit cleanly rather than crashing.
 func (a *App) Boot(w *application.App) {
 	a.ctx, a.cancel = context.WithCancel(context.Background())
+	a.wails = w
 	a.alertIcon = makeAlertIcon(trayIconPNG)
 	a.win = window.NewManager(w, a.cfg)
 	a.win.MountMain()
@@ -161,14 +167,17 @@ func (a *App) Boot(w *application.App) {
 	// subsystems (dispatcher, window manager, server). OnQuit runs the same
 	// teardown as a normal shutdown then asks Wails to exit the run loop.
 	a.tray = tray.Mount(w, trayIconPNG, tray.Handlers{
-		OnShow:   a.win.ShowMain,
-		OnPause:  a.disp.Pause,
-		OnResume: a.disp.Resume,
+		OnShow: a.win.ShowMain,
+		OnFeedback: func() {
+			a.win.OpenFeedbackWindow()
+		},
+		OnAbout: func() {
+			a.win.OpenAboutWindow()
+		},
 		OnQuit: func() {
 			a.Shutdown()
 			w.Quit()
 		},
-		Paused: a.disp.IsPaused,
 	})
 }
 
@@ -299,6 +308,79 @@ func (a *App) ShowMain() {
 	}
 }
 
+// SubmitFeedback creates a GitHub issue with the user's feedback.
+func (a *App) SubmitFeedback(title, body, email string) (retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("提交失败，请稍后重试")
+		}
+	}()
+
+	if title == "" {
+		return fmt.Errorf("标题不能为空")
+	}
+
+	// Build issue body with email metadata.
+	var sb strings.Builder
+	sb.WriteString(body)
+	if email != "" {
+		sb.WriteString("\n\n---\n\n**联系邮箱:** ")
+		sb.WriteString(email)
+	}
+
+	payload := map[string]any{
+		"title":  "[Feedback] " + title,
+		"body":   sb.String(),
+		"labels": []string{"feedback"},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("构造请求失败: %w", err)
+	}
+
+	ctx := context.Background()
+	if a != nil && a.ctx != nil {
+		ctx = a.ctx
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://apigithub.hengshupiena.cn/repos/ailabnews/notice-me/issues",
+		bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer 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")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("提交失败，请检查网络连接")
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		var ghErr struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &ghErr) == nil && ghErr.Message != "" {
+			return fmt.Errorf("提交失败: %s", ghErr.Message)
+		}
+		return fmt.Errorf("提交失败 (HTTP %d)", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// CloseFeedback closes the feedback window. Called from the frontend after
+// showing a success toast so the window can close cleanly.
+func (a *App) CloseFeedback() {
+	if a.win != nil {
+		a.win.CloseFeedbackWindow()
+	}
+}
+
 // ===== Quick toggles & Home tab data =====
 
 // autoConfigureHooks checks if Claude Code is installed and configures
@@ -373,6 +455,21 @@ func (a *App) GetHookStatus() string {
 		return string(b)
 	}
 	b, _ := json.Marshal(status)
+	return string(b)
+}
+
+// CheckPathStatus returns whether the notify-me binary is accessible from
+// the system PATH (so the stdio hook command "notify-me hook" would work).
+func (a *App) CheckPathStatus() string {
+	exe, _ := os.Executable()
+	inPath := false
+	if p, err := exec.LookPath("notify-me"); err == nil && p != "" {
+		inPath = true
+	}
+	b, _ := json.Marshal(map[string]any{
+		"in_path":     inPath,
+		"binary_path": exe,
+	})
 	return string(b)
 }
 
@@ -531,6 +628,8 @@ func (a *App) Shutdown() {
 		}
 
 		if a.win != nil {
+			a.win.CloseAboutWindow()
+			a.win.CloseFeedbackWindow()
 			a.win.CloseAllDiff()
 		}
 		if a.server != nil {

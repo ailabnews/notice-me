@@ -13,6 +13,7 @@ export const useHome = defineStore('home', {
   state: () => ({
     toggles: { sound_enabled: true, blink_enabled: true, stop_hook_enabled: true } as { sound_enabled: boolean; blink_enabled: boolean; stop_hook_enabled: boolean },
     hookStatus: null as HookStatus | null,
+    pathStatus: { in_path: false, binary_path: '' } as { in_path: boolean; binary_path: string },
     stats: {
       tool_usage: [] as ToolUsage[],
       decisions: { approved: 0, denied: 0, timeout: 0, cancelled: 0, other: 0 } as DecisionStats,
@@ -61,6 +62,20 @@ export const useHome = defineStore('home', {
     async loadHookStatus() {
       const raw: string = await Call.ByName('main.App.GetHookStatus')
       this.hookStatus = JSON.parse(raw)
+    },
+    async loadPathStatus() {
+      const raw: string = await Call.ByName('main.App.CheckPathStatus')
+      this.pathStatus = JSON.parse(raw)
+    },
+    async ensureInPath() {
+      this.lastError = ''
+      try {
+        await Call.ByName('main.App.EnsureInPath')
+        await this.loadPathStatus()
+      } catch (e: any) {
+        this.lastError = e?.message ?? String(e)
+        window.alert(this.lastError)
+      }
     },
     async configureHooks(mode: string) {
       this.lastError = ''
