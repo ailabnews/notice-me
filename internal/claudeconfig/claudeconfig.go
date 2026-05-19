@@ -244,7 +244,9 @@ func findClaude() string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, shell, "-l", "-c", "which claude").Output(); err == nil {
+	cmd := exec.CommandContext(ctx, shell, "-l", "-c", "which claude")
+	hideWindow(cmd)
+	if out, err := cmd.Output(); err == nil {
 		if p := strings.TrimSpace(string(out)); p != "" && !strings.HasPrefix(p, "which:") {
 			return p
 		}
@@ -356,7 +358,9 @@ func atomicWrite(p string, data []byte) error {
 func detectClaudeVersion(binPath string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, binPath, "--version").Output()
+	cmd := exec.CommandContext(ctx, binPath, "--version")
+	hideWindow(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
