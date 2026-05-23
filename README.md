@@ -1,5 +1,6 @@
-                                                  [工具使用教程](./docs/README.md)
 # notify-me
+
+<p align="center"><strong><a href="./docs/README.md">使用教程</a></strong></p>
 
 Cross-platform desktop confirmation tool. HTTP in, popup out.
 
