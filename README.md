@@ -1,3 +1,4 @@
+                                                  [工具使用教程](./docs/README.md)
 # notify-me
 
 Cross-platform desktop confirmation tool. HTTP in, popup out.
